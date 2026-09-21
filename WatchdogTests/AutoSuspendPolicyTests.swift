@@ -82,6 +82,27 @@ final class AutoSuspendPolicyTests: XCTestCase {
         XCTAssertTrue(recorded.isEmpty)
     }
 
+    func testAutoSuspendedProcessRemainsReachableForManualResume() async throws {
+        let signals = SignalRecorder()
+        let running = snapshot(pid: 7_005, name: "/usr/local/bin/claude", cpu: 180)
+        let controller = makeController(signals: signals, facts: running)
+        let monitor = ProcessMonitor(defaults: makeDefaults(), controller: controller)
+        monitor.autoSuspendEnabled = true
+
+        monitor.loadActionablePreview(processes: [running], hotProcesses: [], updatedAt: Date())
+        await monitor.refreshAutoSuspendPreview(
+            hot: [running.identity],
+            highMemory: [],
+            snapshots: [running]
+        )
+
+        let suspended = snapshot(pid: running.id, name: running.executablePath, state: "T")
+        monitor.loadActionablePreview(processes: [suspended], hotProcesses: [], updatedAt: Date())
+
+        XCTAssertEqual(monitor.visibleProcesses(scope: .all, search: ""), [suspended])
+        XCTAssertTrue(monitor.actionability(of: suspended).canAct)
+    }
+
     // MARK: - Helpers
 
     private func makeController(

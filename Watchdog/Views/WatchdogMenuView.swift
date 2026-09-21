@@ -394,7 +394,7 @@ struct WatchdogMenuView: View {
     private var emptyDescription: String {
         if !search.isEmpty { return "다른 프로세스 이름, PID 또는 프로젝트를 검색해보세요." }
         return switch scope {
-        case .attention: "CPU 또는 메모리 사용량이 오래 높거나 고아로 의심되는 에이전트를 표시합니다."
+        case .attention: "CPU 또는 메모리 사용량이 오래 높은 프로세스를 표시합니다."
         case .agents: "지원하는 코딩 에이전트를 실행하거나 검색어를 바꿔보세요."
         case .all: "다른 프로세스 이름, PID 또는 프로젝트를 검색해보세요."
         }

@@ -98,8 +98,8 @@ final class ProcessMonitor: ObservableObject {
 
     private let defaults: UserDefaults
     private let sampler = ProcessSampler()
-    private let workingDirectoryResolver = WorkingDirectoryResolver()
-    private let worktreeResolver = WorktreeStateResolver()
+    private let workingDirectoryResolver: WorkingDirectoryResolver
+    private let worktreeResolver: WorktreeStateResolver
     private let authorization: ProcessActionAuthorizationActor
     private let controller: ProcessController
     private let notificationRequestSender: (UNNotificationRequest) -> Void
@@ -123,6 +123,8 @@ final class ProcessMonitor: ObservableObject {
         defaults: UserDefaults = .standard,
         authorization: ProcessActionAuthorizationActor = ProcessActionAuthorizationActor(),
         controller: ProcessController = ProcessController(),
+        workingDirectoryResolver: WorkingDirectoryResolver = WorkingDirectoryResolver(),
+        worktreeResolver: WorktreeStateResolver = WorktreeStateResolver(),
         notificationRequestSender: @escaping (UNNotificationRequest) -> Void = {
             UNUserNotificationCenter.current().add($0)
         }
@@ -130,6 +132,8 @@ final class ProcessMonitor: ObservableObject {
         self.defaults = defaults
         self.authorization = authorization
         self.controller = controller
+        self.workingDirectoryResolver = workingDirectoryResolver
+        self.worktreeResolver = worktreeResolver
         self.notificationRequestSender = notificationRequestSender
         threshold = Self.normalizedCPU(defaults.object(forKey: Keys.threshold) as? Double ?? 100)
         sustainedDuration = Self.normalizedDuration(defaults.object(forKey: Keys.sustainedDuration) as? Double ?? 20)
@@ -141,8 +145,10 @@ final class ProcessMonitor: ObservableObject {
         defaults.set(memoryThresholdGB, forKey: Keys.memoryThresholdGB)
     }
 
+    /// Orphans are informational: a detached-but-healthy agent must not keep
+    /// the menu bar badge lit. Only live CPU/memory pressure counts as an alert.
     var alertCount: Int {
-        orphanAlertProcesses.union(hotProcesses).union(highMemoryProcesses).count
+        hotProcesses.union(highMemoryProcesses).count
     }
 
 
@@ -205,6 +211,12 @@ final class ProcessMonitor: ObservableObject {
             }
             hotProcesses = nextHotProcesses
             highMemoryProcesses = nextHighMemoryProcesses
+            await workingDirectoryResolver.resolve(
+                snapshots,
+                generation: token.generation
+            ) { [weak self] result in
+                await self?.mergeWorkingDirectory(result)
+            }
             if autoSuspendEnabled {
                 await autoSuspendNewlyFlagged(
                     hot: nextHotProcesses.subtracting(previousHotProcesses),
@@ -276,15 +288,6 @@ final class ProcessMonitor: ObservableObject {
         }
 
         return scope == .all ? Array(filtered.prefix(60)) : filtered
-    }
-
-    /// Orphans are informational: a detached-but-healthy agent must not keep
-    /// the menu bar badge lit. Only live CPU/memory pressure counts as an alert.
-    var orphanAlertProcesses: Set<ProcessIdentity> {
-        Set(
-            processes.filter { $0.suspectedOrphan && !ignoredProcesses.contains($0.identity) }
-                .map(\.identity)
-        )
     }
 
     func isHot(_ process: ProcessSnapshot) -> Bool {
@@ -685,6 +688,10 @@ final class ProcessMonitor: ObservableObject {
             return
         }
         processes[index].workingDirectory = result.workingDirectory
+        let snapshot = processes[index]
+        Task { [weak self] in
+            await self?.resolveWorktreeStates(snapshots: [snapshot])
+        }
     }
 
     private func pruneIgnoredProcesses(liveIdentities: Set<ProcessIdentity>) {
@@ -800,17 +807,13 @@ final class ProcessMonitor: ObservableObject {
 
     private func requestNotificationPermission() {
         let shouldRequestAuthorization = notificationsEnabled
-        Task {
+        Task { [weak self] in
             let center = UNUserNotificationCenter.current()
             if shouldRequestAuthorization {
                 _ = try? await center.requestAuthorization(options: [.alert, .sound])
             }
-            center.getNotificationSettings { [weak self] settings in
-                let authorizationStatus = settings.authorizationStatus
-                Task { @MainActor [weak self] in
-                    self?.notificationAuthorization = authorizationStatus
-                }
-            }
+            let settings = await center.notificationSettings()
+            self?.notificationAuthorization = settings.authorizationStatus
         }
     }
 

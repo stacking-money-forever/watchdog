@@ -8,13 +8,14 @@ import SwiftUI
 /// Watchdog.
 enum WatchdogUITestFixture {
     static let actionable = "--ui-test-fixture"
+    static let live = "--ui-test-live"
     static let stale = "--ui-test-stale-fixture"
     static let outcome = "--ui-test-outcome-fixture"
     static let exited = "--ui-test-exited-fixture"
     static let stillRunning = "--ui-test-still-running-fixture"
 
     static func isActive(in arguments: [String]) -> Bool {
-        [actionable, stale, outcome, exited, stillRunning]
+        [actionable, live, stale, outcome, exited, stillRunning]
             .contains { arguments.contains($0) }
     }
 }
@@ -146,7 +147,7 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
         else {
             return
         }
-        existing.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+        existing.activate(options: [.activateAllWindows])
     }
 }
 
@@ -203,13 +204,13 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
         var shouldShowFixtureWindow = false
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        let isUITestFixture = WatchdogUITestFixture.isActive(in: arguments)
         let usesActionableFixture = arguments.contains(WatchdogUITestFixture.actionable)
+        let usesLiveFixture = arguments.contains(WatchdogUITestFixture.live)
         let usesStaleFixture = arguments.contains(WatchdogUITestFixture.stale)
         let usesOutcomeFixture = arguments.contains(WatchdogUITestFixture.outcome)
         let usesExitedFixture = arguments.contains(WatchdogUITestFixture.exited)
         let usesStillRunningFixture = arguments.contains(WatchdogUITestFixture.stillRunning)
-        shouldShowFixtureWindow = usesActionableFixture || usesStaleFixture
+        shouldShowFixtureWindow = usesActionableFixture || usesLiveFixture || usesStaleFixture
             || usesOutcomeFixture || usesExitedFixture || usesStillRunningFixture
         if usesActionableFixture || usesOutcomeFixture || usesExitedFixture || usesStillRunningFixture {
             monitor.loadActionablePreview(
@@ -238,7 +239,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
                 highMemoryProcesses: [Self.fixtureProcesses[0].identity],
                 updatedAt: Date(timeIntervalSinceNow: -6)
             )
-        } else if !isRunningUnitTests {
+        } else if usesLiveFixture || !isRunningUnitTests {
             monitor.start()
         }
         if shouldShowFixtureWindow {
@@ -256,7 +257,15 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
 
     var body: some Scene {
         MenuBarExtra {
+            // A MenuBarExtra window sizes to its content's ideal height, and the
+            // process list is a ScrollView whose ideal height is effectively zero.
+            // Without an explicit size the popover collapsed to the chrome plus a
+            // few points and the list was unusable. Pin the popover so the list
+            // always gets real height, and keep it wider than the 360 pt
+            // confirmation card. The UI-test fixture window sizes WatchdogMenuView
+            // itself and must keep its own geometry.
             WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
+                .frame(width: 380, height: 520)
         } label: {
             WatchdogMenuBarIcon(alertCount: monitor.alertCount)
         }

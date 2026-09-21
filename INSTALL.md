@@ -29,7 +29,7 @@ Watchdog-0.2.0-macos.dmg  082ac4d5c071a714b8de2936a54dd759a8243d293f9b64ae6e0781
    ```
 
 3. DMG를 열고 Watchdog을 Applications 바로가기로 드래그합니다.
-4. 현재 공개 배포본은 Apple 공증 전이므로 Finder에서 Watchdog을 우클릭하고 **열기 → 열기**를 선택합니다.
+4. 현재 공개 배포본은 ad-hoc 서명으로 Apple 공증이 없어 Finder에서 Watchdog을 우클릭하고 **열기 → 열기**를 선택합니다.
 5. 우클릭으로 열리지 않으면 한 번 실행을 시도한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 선택합니다.
 
 첫 실행 시 Watchdog은 로그인 항목에 자동 등록됩니다. 감지 규칙의 **로그인 시 자동 실행** 토글을 끄면 자동 등록을 해제할 수 있습니다.
@@ -89,6 +89,8 @@ pgrep -fl "$APP/Contents/MacOS/Watchdog"
 CFBundleIdentifier: dev.justn.watchdog
 CFBundleShortVersionString: 0.2.0
 ```
+
+공식 `v0.2.0` 파일은 `codesign --verify` 구조 검증을 통과하지만 서명은 ad-hoc(TeamIdentifier=not set)이며 공증·스테이플링되어 있지 않습니다. 따라서 `spctl --assess`가 거부하는 것이 예상된 상태입니다.
 
 ## 소스에서 빌드
 
@@ -151,7 +153,7 @@ rm -rf "$HOME/Applications/Watchdog.app"
 
 ## Gatekeeper 관련 원칙
 
-현재 공개 배포본은 Apple Development 서명이며 Developer ID 공증 전입니다. macOS의 앱별 승인 절차를 사용합니다.
+현재 공개 배포본은 ad-hoc 서명(Team ID 없음)이며 Apple 공증·스테이플링이 없어 `spctl` 평가를 통과하지 못합니다. macOS의 앱별 승인 절차를 사용합니다.
 
 허용:
 
