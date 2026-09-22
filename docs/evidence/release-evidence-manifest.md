@@ -37,6 +37,11 @@
 
 **미수락.** 남은 P0: `A28`(진행 중), `A29`. 사람 경계: `A23`, `B07`, `B08`, `B09`.
 
+2026-09-22 기준으로 이미 닫힌 것:
+- `A13` shipping UI runner — 9개 UI 테스트 0 실패로 검증(`docs/evidence/a13-ui-runner-20260922.md`).
+- `B01`/`B03` — PR #18의 원격 CI 실행 `35670379988`(head `f22beed`)이 12단계 전부 성공.
+- `B06` — `candidate.yml`은 기본 브랜치에 없으면 GitHub이 등록하지 않으므로 병합 후에만 원격 실행 가능.
+
 `A28` soak: candidate pid `15912`(exe `1a273e23…`), `started_at` `2026-09-21T23:54:57Z`,
 `duration_seconds` 28800, `interval_seconds` 60, 출력 `/tmp/wd-soak-clean`.
 종료 `2026-09-22T07:54:57Z`(KST 16:54:57). 판정은 `scripts/analyze-soak.sh`로 하며 `max_timestamp_gap_seconds ≤ 120`이어야 한다.
