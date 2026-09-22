@@ -26,6 +26,11 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
+      - name: Report selected toolchain
+        run: |
+          xcodebuild -version
+          xcodegen --version
+
       - name: Generate Xcode project
         run: xcodegen generate
 
@@ -65,4 +70,22 @@ jobs:
             -scheme Watchdog \
             -configuration Release \
             -derivedDataPath DerivedData/release \
+            build
+
+      - name: Build Preview
+        run: |
+          xcodebuild \
+            -project Watchdog.xcodeproj \
+            -scheme WatchdogPreview \
+            -configuration Debug \
+            -derivedDataPath DerivedData/preview \
+            build
+
+      - name: Build Snapshot
+        run: |
+          xcodebuild \
+            -project Watchdog.xcodeproj \
+            -scheme WatchdogSnapshot \
+            -configuration Debug \
+            -derivedDataPath DerivedData/snapshot \
             build

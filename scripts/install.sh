@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-readonly TAG="v0.2.0"
-readonly ARCHIVE_NAME="Watchdog-0.2.0-macos.zip"
+readonly TAG="v0.2.1"
+readonly ARCHIVE_NAME="Watchdog-0.2.1-macos.zip"
 readonly ARCHIVE_URL="https://github.com/stacking-money-forever/watchdog/releases/download/${TAG}/${ARCHIVE_NAME}"
-readonly EXPECTED_SHA256="a5492e56b1f0e09684a640bf1eeb44daaf2aacd7c31349becdaeae36a8412791"
+readonly EXPECTED_SHA256="9153bef56fb0871cc10718d21b6351c47e64e9dea19d2374d51135d66d1bebd7"
 
 install_dir="${WATCHDOG_INSTALL_DIR:-$HOME/Applications}"
 launch_after_install=true
@@ -53,7 +53,7 @@ done
   exit 1
 }
 
-for command in curl shasum ditto codesign lsof pgrep; do
+for command in curl shasum ditto codesign lsof pgrep ps; do
   command -v "$command" >/dev/null || {
     echo "Required command not found: $command" >&2
     exit 1
@@ -105,6 +105,10 @@ if [[ -d "$target_app" ]]; then
       [[ "$line" == n* ]] || continue
       [[ "${line#n}" == "$target_executable" ]] && return 0
     done < <(lsof -a -p "$pid" -d txt -Fn 2>/dev/null || true)
+    # A SIGSTOPped process can be absent from lsof output on macOS. `comm`
+    # still reports its executable path, so use it only as a second exact-path
+    # check for the target bundle.
+    [[ "$(ps -p "$pid" -o comm= 2>/dev/null | xargs)" == "$target_executable" ]] && return 0
     return 1
   }
 
@@ -124,7 +128,11 @@ if [[ -d "$target_app" ]]; then
     for _ in 1 2 3 4 5; do
       still_running=false
       for pid in "${running_pids[@]}"; do
-        if is_installed_process "$pid"; then
+        # `lsof` can temporarily fail for a stopped process after SIGTERM.
+        # These PIDs were already bound to the exact installed executable
+        # before signaling, so an alive PID must fail closed rather than let
+        # the installer move its running bundle.
+        if /bin/kill -0 "$pid" 2>/dev/null; then
           still_running=true
           break
         fi

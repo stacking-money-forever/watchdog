@@ -15,18 +15,23 @@ struct WatchdogSnapshot {
             processes: processes,
             hotProcesses: Set(processes.filter { [7_101, 7_102].contains($0.id) }.map(\.identity)),
             highMemoryProcesses: Set(processes.filter { $0.id == 7_102 }.map(\.identity)),
-            updatedAt: Date(timeIntervalSince1970: 1_787_638_400)
+            updatedAt: Date()
         )
 
         NSApplication.shared.setActivationPolicy(.prohibited)
 
-        let rootView = WatchdogMenuView(monitor: monitor)
+        let launchAtLogin = LaunchAtLoginController(
+            service: FakeLaunchAtLoginService(),
+            automaticallyRegister: false
+        )
+        let rootView = WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
             .frame(width: 480, height: 540)
             .background(Color(nsColor: .windowBackgroundColor))
         let hostingView = NSHostingView(rootView: rootView)
         hostingView.frame = NSRect(x: 0, y: 0, width: 480, height: 540)
         hostingView.appearance = NSAppearance(named: .darkAqua)
         hostingView.layoutSubtreeIfNeeded()
+        hostingView.display()
 
         guard let bitmap = NSBitmapImageRep(
             bitmapDataPlanes: nil,
@@ -112,4 +117,11 @@ struct WatchdogSnapshot {
         case couldNotCreateBitmap
         case couldNotEncodePNG
     }
+}
+
+@MainActor
+private struct FakeLaunchAtLoginService: LaunchAtLoginServicing {
+    var status: LaunchAtLoginStatus { .notRegistered }
+    func register() throws {}
+    func unregister() throws {}
 }

@@ -1,0 +1,41 @@
+name: Build candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build unsigned candidate artifacts
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build local candidate
+        run: ./scripts/build-candidate.sh --output-dir candidate-artifacts
+
+      - name: Verify candidate manifest is present
+        run: |
+          test -f candidate-artifacts/manifest.json
+          test -f candidate-artifacts/SHA256SUMS.txt
+          test -f candidate-artifacts/Watchdog.app/Contents/MacOS/Watchdog
+
+      - name: Upload candidate artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: watchdog-candidate-${{ github.sha }}
+          path: candidate-artifacts
+          if-no-files-found: error
+          retention-days: 14

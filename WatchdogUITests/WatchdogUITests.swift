@@ -18,6 +18,10 @@ final class WatchdogUITests: XCTestCase {
         let row = app.descendants(matching: .any)["\(actionableProcess).row"]
         XCTAssertTrue(row.waitForExistence(timeout: 2))
         XCTAssertTrue(row.label.contains("claude"))
+        let projectMetadata = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS 'watchdog-fixture' OR value CONTAINS 'watchdog-fixture'")
+        ).firstMatch
+        XCTAssertTrue(projectMetadata.exists)
         XCTAssertTrue(app.staticTexts["연결된 터미널 세션을 찾을 수 없습니다"].exists)
     }
 
@@ -31,7 +35,7 @@ final class WatchdogUITests: XCTestCase {
         aboutButton.click()
 
         let version = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS '0.2.0' OR value CONTAINS '0.2.0'")
+            NSPredicate(format: "label CONTAINS '0.2.1' OR value CONTAINS '0.2.1'")
         ).firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 2))
 

@@ -7,29 +7,29 @@
 | 항목 | 값 |
 |---|---|
 | 지원 OS | macOS 14 이상 |
-| 현재 배포 | `v0.2.0` |
-| 공식 릴리스 | <https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.0> |
+| 현재 배포 | `v0.2.1` |
+| 공식 릴리스 | <https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.1> |
 | 기본 설치 위치 | `~/Applications/Watchdog.app` 또는 `/Applications/Watchdog.app` |
 | 앱 식별자 | `dev.justn.watchdog` |
 
 공식 파일 SHA-256:
 
 ```text
-Watchdog-0.2.0-macos.zip  a5492e56b1f0e09684a640bf1eeb44daaf2aacd7c31349becdaeae36a8412791
-Watchdog-0.2.0-macos.dmg  082ac4d5c071a714b8de2936a54dd759a8243d293f9b64ae6e07815f3d950877
+Watchdog-0.2.1-macos.zip  9153bef56fb0871cc10718d21b6351c47e64e9dea19d2374d51135d66d1bebd7
+Watchdog-0.2.1-macos.dmg  0b489544c217d5f27820ccc23025872f247450a4860aada9b1d5ecca04d1822b
 ```
 
 ## 사람용: DMG로 설치
 
-1. [공식 릴리스](https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.0)에서 `Watchdog-0.2.0-macos.dmg`를 내려받습니다.
+1. [공식 릴리스](https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.1)에서 `Watchdog-0.2.1-macos.dmg`를 내려받습니다.
 2. 선택적으로 무결성을 확인합니다.
 
    ```bash
-   shasum -a 256 ~/Downloads/Watchdog-0.2.0-macos.dmg
+   shasum -a 256 ~/Downloads/Watchdog-0.2.1-macos.dmg
    ```
 
 3. DMG를 열고 Watchdog을 Applications 바로가기로 드래그합니다.
-4. 현재 공개 배포본은 Apple 공증 전이므로 Finder에서 Watchdog을 우클릭하고 **열기 → 열기**를 선택합니다.
+4. 현재 공개 배포본은 ad-hoc 서명으로 Apple 공증이 없어 Finder에서 Watchdog을 우클릭하고 **열기 → 열기**를 선택합니다.
 5. 우클릭으로 열리지 않으면 한 번 실행을 시도한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 선택합니다.
 
 첫 실행 시 Watchdog은 로그인 항목에 자동 등록됩니다. 감지 규칙의 **로그인 시 자동 실행** 토글을 끄면 자동 등록을 해제할 수 있습니다.
@@ -87,8 +87,10 @@ pgrep -fl "$APP/Contents/MacOS/Watchdog"
 
 ```text
 CFBundleIdentifier: dev.justn.watchdog
-CFBundleShortVersionString: 0.2.0
+CFBundleShortVersionString: 0.2.1
 ```
+
+공식 `v0.2.1` 파일은 `codesign --verify` 구조 검증을 통과하지만 서명은 ad-hoc(TeamIdentifier=not set)이며 공증·스테이플링되어 있지 않습니다. 따라서 `spctl --assess`가 거부하는 것이 예상된 상태입니다.
 
 ## 소스에서 빌드
 
@@ -151,7 +153,7 @@ rm -rf "$HOME/Applications/Watchdog.app"
 
 ## Gatekeeper 관련 원칙
 
-현재 공개 배포본은 Apple Development 서명이며 Developer ID 공증 전입니다. macOS의 앱별 승인 절차를 사용합니다.
+현재 공개 배포본은 ad-hoc 서명(Team ID 없음)이며 Apple 공증·스테이플링이 없어 `spctl` 평가를 통과하지 못합니다. macOS의 앱별 승인 절차를 사용합니다.
 
 허용:
 

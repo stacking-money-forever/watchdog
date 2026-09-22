@@ -4,9 +4,14 @@ import SwiftUI
 @main
 struct WatchdogPreviewApp: App {
     @StateObject private var monitor: ProcessMonitor
+    @StateObject private var launchAtLogin: LaunchAtLoginController
 
     init() {
         let monitor = ProcessMonitor()
+        let launchAtLogin = LaunchAtLoginController(
+            service: FakeLaunchAtLoginService(),
+            automaticallyRegister: false
+        )
 #if DEBUG
         if CommandLine.arguments.contains("--ui-test-fixture") {
             let processes = Self.uiTestProcesses
@@ -19,11 +24,12 @@ struct WatchdogPreviewApp: App {
         }
 #endif
         _monitor = StateObject(wrappedValue: monitor)
+        _launchAtLogin = StateObject(wrappedValue: launchAtLogin)
     }
 
     var body: some Scene {
         WindowGroup("Watchdog 미리보기") {
-            WatchdogMenuView(monitor: monitor)
+            WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
                 .frame(minWidth: 480, minHeight: 590)
         }
         .defaultSize(width: 480, height: 590)
@@ -83,4 +89,11 @@ struct WatchdogPreviewApp: App {
         )
     }
 #endif
+}
+
+@MainActor
+private struct FakeLaunchAtLoginService: LaunchAtLoginServicing {
+    var status: LaunchAtLoginStatus { .notRegistered }
+    func register() throws {}
+    func unregister() throws {}
 }

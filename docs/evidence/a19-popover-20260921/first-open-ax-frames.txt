@@ -1,0 +1,26 @@
+window_bounds: {'height': 212.0, 'width': 298.0, 'x': 1100.0, 'y': 35.0}
+screenshot: 596x424
+
+0   AXWindow               None                           {'h': 212.0, 'w': 298.0, 'x': 1100.0, 'y': 35.0}
+1   AXRadioButton          '주의 필요'                        {'h': 24.0, 'w': 69.0, 'x': 1161.0, 'y': 101.0}
+2   AXRadioButton          '에이전트'                         {'h': 24.0, 'w': 68.0, 'x': 1231.0, 'y': 101.0}
+3   AXRadioButton          '전체'                           {'h': 24.0, 'w': 68.0, 'x': 1300.0, 'y': 101.0}
+4   AXTextField            '23930'                        {'h': 16.0, 'w': 226.5, 'x': 1147.5, 'y': 143.0}
+5   AXDisclosureTriangle   '감지 규칙'                        {'h': 13.0, 'w': 71.5, 'x': 1091.5, 'y': 181.0}
+6   AXOpaqueProviderGroup  None                           {'h': 48.0, 'w': 274.0, 'x': 1112.0, 'y': 210.0}
+7   AXStaticText           'sleep'                        {'h': 16.0, 'w': 34.0, 'x': 1166.0, 'y': 218.0}
+8   AXStaticText           'PID 23930  ·  06:48'          {'h': 13.0, 'w': 52.0, 'x': 1166.0, 'y': 237.0}
+9   AXStaticText           '0%'                           {'h': 17.0, 'w': 19.0, 'x': 1293.0, 'y': 217.5}
+10  AXStaticText           '1.2MB'                        {'h': 13.0, 'w': 31.0, 'x': 1281.0, 'y': 237.5}
+11  AXButton               '프로세스 일시 정지'                   {'h': 9.5, 'w': 7.5, 'x': 1330.5, 'y': 229.5}
+12  AXMenuButton           '프로세스 작업'                      {'h': 14.0, 'w': 20.0, 'x': 1356.0, 'y': 227.0}
+13  AXButton               None                           None
+14  AXButton               None                           None
+15  AXButton               None                           {'h': 29.0, 'w': 6.0, 'x': 1389.0, 'y': 210.0}
+16  AXButton               None                           None
+17  AXButton               '지금 새로고침'                      {'h': 10.5, 'w': 9.0, 'x': 1328.5, 'y': 225.5}
+18  AXButton               'Watchdog 정보'                  {'h': 10.0, 'w': 10.0, 'x': 1347.5, 'y': 225.5}
+19  AXButton               '종료'                           {'h': 13.0, 'w': 17.5, 'x': 1366.5, 'y': 224.0}
+20  AXPopUpButton          '이모지 및 기호'                     {'h': 2.0, 'w': 74.0, 'x': -1.0, 'y': -1.0}
+21  AXDisclosureTriangle   '후보 단어 목록'                     {'h': 30.0, 'w': 15.0, 'x': -389.0, 'y': -30.0}
+22  AXButton               '“23930”'                      {'h': 30.0, 'w': 122.5, 'x': -372.0, 'y': -30.0}

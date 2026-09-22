@@ -10,21 +10,21 @@ Watchdog는 폭주하거나 고아가 된 프로세스를 터미널 명령 없�
 
 1. [GitHub Releases](https://github.com/stacking-money-forever/watchdog/releases)에서 최신 DMG를 내려받습니다.
 2. DMG를 열고 Watchdog을 Applications 폴더로 드래그합니다.
-3. 현재 공개 배포본은 Apple 공증 전 빌드이므로 최초 실행 시 Finder에서 Watchdog을 우클릭하고 **열기 → 열기**를 선택합니다.
+3. 현재 공개 배포본은 ad-hoc 서명(Team ID 없음)이며 Apple 공증·스테이플링이 없어 Gatekeeper 평가(`spctl`)를 통과하지 못합니다. 최초 실행 시 Finder에서 Watchdog을 우클릭하고 **열기 → 열기**를 선택합니다.
 
 우클릭으로 열리지 않으면 한 번 실행을 시도한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 선택합니다. 이는 Apple이 제공하는 앱별 승인 절차입니다. 전역 Gatekeeper 비활성화나 격리 속성 제거는 필요하지 않습니다.
 
-공식 배포 파일은 이 저장소의 Releases에서만 제공합니다. `v0.2.0` 파일 무결성:
+공식 배포 파일은 이 저장소의 Releases에서만 제공합니다. `v0.2.1` 파일 무결성:
 
 ```text
-Watchdog-0.2.0-macos.zip  a5492e56b1f0e09684a640bf1eeb44daaf2aacd7c31349becdaeae36a8412791
-Watchdog-0.2.0-macos.dmg  082ac4d5c071a714b8de2936a54dd759a8243d293f9b64ae6e07815f3d950877
+Watchdog-0.2.1-macos.zip  9153bef56fb0871cc10718d21b6351c47e64e9dea19d2374d51135d66d1bebd7
+Watchdog-0.2.1-macos.dmg  0b489544c217d5f27820ccc23025872f247450a4860aada9b1d5ecca04d1822b
 ```
 
 검증 명령:
 
 ```bash
-shasum -a 256 Watchdog-0.2.0-macos.dmg
+shasum -a 256 Watchdog-0.2.1-macos.dmg
 ```
 
 ### 에이전트·터미널에서 설치

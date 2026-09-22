@@ -3,20 +3,25 @@ import Darwin
 
 /// Verdict for a git worktree referenced by an agent process.
 enum WorktreeVerdict: Equatable, Sendable {
-    /// Working tree has no uncommitted changes and its branch is fully merged
-    /// into the default branch: safe to remove.
+    /// Working tree showed a clean Git status at observation time: no
+    /// uncommitted changes and no unpushed commits. Not a guarantee that
+    /// removal is safe.
     case clean
     /// Working tree has uncommitted changes, untracked files, or unpushed
     /// commits: removal would lose work.
     case dirty
-    /// The path does not exist or is not a git working tree.
+    /// The filesystem path does not exist.
     case missing
+    /// The path exists but the git status lookup failed, timed out, or the
+    /// path is not a git working tree: the state cannot be determined.
+    case unavailable
 
     var localizedDescription: String {
         switch self {
-        case .clean: return "정리 가능한 워크트리"
+        case .clean: return "Git 상태가 깨끗한 워크트리"
         case .dirty: return "변경이 남아 있는 워크트리"
         case .missing: return "워크트리 없음"
+        case .unavailable: return "워크트리 상태 확인 불가"
         }
     }
 }
@@ -68,6 +73,8 @@ actor WorktreeStateResolver {
     private var cache: [String: CacheEntry] = [:]
     private var accessCounter: UInt64 = 0
     private var active: [String: Task<WorktreeState?, Never>] = [:]
+    private var queued: [(path: String, handler: @Sendable (String, WorktreeState?) -> Void)] = []
+    private let maximumQueuedLookups = 16
 
     init(
         policy: Policy = .standard,
@@ -93,20 +100,15 @@ actor WorktreeStateResolver {
                 deliver(path, state: cached, to: onResult)
                 continue
             }
-            guard active[path] == nil, active.count < policy.maximumConcurrentLookups else {
+            guard active[path] == nil,
+                  !queued.contains(where: { $0.path == path })
+            else {
                 continue
             }
-            let runner = self.runner
-            let lookupPolicy = self.policy
-            active[path] = Task { [weak self] in
-                let state = await Self.lookup(
-                    path: path,
-                    runner: runner,
-                    deadline: lookupPolicy.lookupDeadline
-                )
-                guard let self else { return state }
-                await self.finishLookup(path: path, state: state, onResult: onResult)
-                return state
+            if active.count < policy.maximumConcurrentLookups {
+                startLookup(path: path, onResult: onResult)
+            } else if queued.count < maximumQueuedLookups {
+                queued.append((path: path, handler: onResult))
             }
         }
     }
@@ -116,6 +118,7 @@ actor WorktreeStateResolver {
             task.cancel()
         }
         active.removeAll()
+        queued.removeAll()
     }
 
     private func finishLookup(
@@ -126,6 +129,7 @@ actor WorktreeStateResolver {
         active[path] = nil
         store(state, for: path)
         deliver(path, state: state, to: onResult)
+        startQueuedLookups()
     }
 
     private func deliver(
@@ -139,8 +143,34 @@ actor WorktreeStateResolver {
     /// Test hook: waits for every in-flight lookup so tests can assert
     /// deterministically without sleep loops.
     func drainForTesting() async {
-        for (_, task) in active {
+        while let task = active.values.first {
             _ = await task.value
+        }
+    }
+
+    private func startQueuedLookups() {
+        while active.count < policy.maximumConcurrentLookups, !queued.isEmpty {
+            let request = queued.removeFirst()
+            guard active[request.path] == nil else { continue }
+            startLookup(path: request.path, onResult: request.handler)
+        }
+    }
+
+    private func startLookup(
+        path: String,
+        onResult: @escaping @Sendable (String, WorktreeState?) -> Void
+    ) {
+        let runner = self.runner
+        let lookupPolicy = self.policy
+        active[path] = Task { [weak self] in
+            let state = await Self.lookup(
+                path: path,
+                runner: runner,
+                deadline: lookupPolicy.lookupDeadline
+            )
+            guard let self else { return state }
+            await self.finishLookup(path: path, state: state, onResult: onResult)
+            return state
         }
     }
 
@@ -185,6 +215,9 @@ actor WorktreeStateResolver {
         runner: Runner,
         deadline: Duration
     ) async -> WorktreeState? {
+        guard FileManager.default.fileExists(atPath: path) else {
+            return WorktreeState(path: path, verdict: .missing, detail: nil)
+        }
         // One batched invocation per path keeps helper-process pressure bounded.
         // --porcelain=v2 lets us count dirty entries; -b exposes the branch.
         guard let output = try? await runGit(
@@ -193,7 +226,7 @@ actor WorktreeStateResolver {
             runner: runner,
             deadline: deadline
         ) else {
-            return WorktreeState(path: path, verdict: .missing, detail: nil)
+            return WorktreeState(path: path, verdict: .unavailable, detail: nil)
         }
         return parseStatus(output: output, path: path)
     }

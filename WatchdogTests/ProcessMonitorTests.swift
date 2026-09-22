@@ -45,6 +45,15 @@ final class ProcessMonitorTests: XCTestCase {
         )
     }
 
+    func testAlertCountExcludesOrphanOnlyProcess() {
+        let monitor = makeMonitor()
+        var process = snapshot(pid: 2_001, name: "/usr/local/bin/gjc")
+        process.orphanReason = .detachedSession
+        monitor.loadPreview(processes: [process], hotProcesses: [], updatedAt: Date())
+
+        XCTAssertEqual(monitor.alertCount, 0)
+    }
+
     func testIgnoreSuppressesAllAttentionAndUndoRestoresOrphanAttention() {
         let monitor = makeMonitor()
         var process = snapshot(pid: 2_000, name: "/usr/local/bin/gjc", cpu: 120, memoryGB: 3)
@@ -447,6 +456,42 @@ final class ProcessMonitorTests: XCTestCase {
         )
 
         XCTAssertNil(monitor.processes.first?.workingDirectory)
+    }
+
+    func testCurrentWorkingDirectoryMergeTriggersWorktreeStateResolution() async throws {
+        let worktreeResolver = WorktreeStateResolver(
+            policy: .init(
+                maximumConcurrentLookups: 1,
+                lookupDeadline: .milliseconds(100),
+                cacheCapacity: 1,
+                positiveTTL: .seconds(1),
+                negativeTTL: .seconds(1)
+            ),
+            runner: { _, _, _ in "# branch.head main\n" }
+        )
+        let monitor = ProcessMonitor(
+            defaults: makeDefaults(),
+            worktreeResolver: worktreeResolver,
+            notificationRequestSender: { _ in }
+        )
+        let process = snapshot(pid: 5_504, name: "/usr/local/bin/gjc")
+        monitor.loadActionablePreview(processes: [process], hotProcesses: [], updatedAt: Date())
+
+        monitor.mergeWorkingDirectoryPreview(
+            WorkingDirectoryResult(
+                generation: monitor.previewGeneration,
+                identity: process.identity,
+                workingDirectory: "/tmp"
+            )
+        )
+
+        for _ in 0..<20 where monitor.processes.first?.worktreeState == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        XCTAssertEqual(monitor.processes.first?.workingDirectory, "/tmp")
+        XCTAssertEqual(monitor.processes.first?.worktreeState?.verdict, .clean)
+        XCTAssertEqual(monitor.processes.first?.worktreeState?.detail, "main")
     }
 
     func testTerminationLookupClassificationIsAuthoritative() {

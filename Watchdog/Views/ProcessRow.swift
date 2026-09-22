@@ -213,7 +213,7 @@ struct ProcessRow: View {
         switch verdict {
         case .clean: return .green
         case .dirty: return .blue
-        case .missing: return .secondary
+        case .missing, .unavailable: return .secondary
         }
     }
 

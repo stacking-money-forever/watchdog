@@ -1,0 +1,1 @@
+pid=52429 window_id=1274 layer=101 onscreen=true owner=Watchdog name= x=1100.0 y=35.0 w=298.0 h=212.0
