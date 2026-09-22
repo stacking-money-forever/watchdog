@@ -805,6 +805,17 @@ final class ProcessMonitor: ObservableObject {
         }
     }
 
+    /// `UNNotificationSettings` is not `Sendable`, so read the authorization
+    /// status in a nonisolated context and hand only the `Sendable` enum back to
+    /// the main actor. Reading the settings object directly on the main actor
+    /// compiles on newer toolchains but is rejected as a non-Sendable result
+    /// sent from a nonisolated context by the one the release workflow uses.
+    private nonisolated static func notificationAuthorizationStatus(
+        from center: UNUserNotificationCenter
+    ) async -> UNAuthorizationStatus {
+        await center.notificationSettings().authorizationStatus
+    }
+
     private func requestNotificationPermission() {
         let shouldRequestAuthorization = notificationsEnabled
         Task { [weak self] in
@@ -812,8 +823,8 @@ final class ProcessMonitor: ObservableObject {
             if shouldRequestAuthorization {
                 _ = try? await center.requestAuthorization(options: [.alert, .sound])
             }
-            let settings = await center.notificationSettings()
-            self?.notificationAuthorization = settings.authorizationStatus
+            let authorizationStatus = await Self.notificationAuthorizationStatus(from: center)
+            self?.notificationAuthorization = authorizationStatus
         }
     }
 
