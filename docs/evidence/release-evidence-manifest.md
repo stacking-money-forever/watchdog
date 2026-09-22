@@ -35,16 +35,23 @@
 
 ## 현재 판정
 
-**미수락.** 남은 P0: `A28`(진행 중), `A29`. 사람 경계: `A23`, `B07`, `B08`, `B09`.
+**v0.2.1 게시됨(2026-09-22T00:25:28Z).** 릴리스 기록과 검증 전문은
+`docs/evidence/release-v0.2.1-20260922.md`.
 
-2026-09-22 기준으로 이미 닫힌 것:
-- `A13` shipping UI runner — 9개 UI 테스트 0 실패로 검증(`docs/evidence/a13-ui-runner-20260922.md`).
-- `B01`/`B03` — PR #18의 원격 CI 실행 `35670379988`(head `f22beed`)이 12단계 전부 성공.
-- `B06` — `candidate.yml`은 기본 브랜치에 없으면 GitHub이 등록하지 않으므로 병합 후에만 원격 실행 가능.
+게시된 자산은 빌드 산출물·manifest·GitHub digest·직접 다운로드의 해시가 모두 일치했고,
+문서화된 `scripts/install.sh`가 게시 릴리스에서 체크섬 검증 후 **Watchdog 0.2.1 (6)** 을 설치함을 확인했다.
+아티팩트는 커밋 `f0172fd`(`source_tree` `a3d80607…`, `source_dirty=false`)에서 빌드됐고,
+태그 대상 `100354e`와의 차이는 문서 3개 파일뿐임을 서브트리 비교로 확인했다.
 
-`A28` soak: candidate pid `15912`(exe `1a273e23…`), `started_at` `2026-09-21T23:54:57Z`,
-`duration_seconds` 28800, `interval_seconds` 60, 출력 `/tmp/wd-soak-clean`.
-종료 `2026-09-22T07:54:57Z`(KST 16:54:57). 판정은 `scripts/analyze-soak.sh`로 하며 `max_timestamp_gap_seconds ≤ 120`이어야 한다.
+게시 시점에 남아 있던 미완 항목(릴리스 노트에도 명시):
+- `A28` 8시간 안정성 soak — 게시 후 **릴리스 바이너리**(`d75457b3…`)로 다시 시작해 진행 중.
+- `A23` clean account에서의 앱별 Gatekeeper 승인 미관찰.
+- `B07` 실제 알림 배너, `B08` 로그아웃 후 로그인 자동 실행, `B09` 키보드·VoiceOver 미검증.
+- `B06` `candidate.yml`은 기본 브랜치 병합 후에만 dispatch 가능(현재 병합됨).
+
+`A28` soak: candidate pid `72785`(exe `d75457b3…`, version `0.2.1` build `6`), `started_at` `2026-09-22T00:26:45Z`,
+`duration_seconds` 28800, `interval_seconds` 60, 출력 `/tmp/wd-soak-rel`.
+종료 `2026-09-22T08:26:45Z`(KST 17:26:45). 판정은 `scripts/analyze-soak.sh`로 하며 `max_timestamp_gap_seconds ≤ 120`이어야 한다.
 
 ## 릴리스 절차상 선행 조건
 
