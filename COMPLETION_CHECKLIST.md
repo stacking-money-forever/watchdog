@@ -99,4 +99,12 @@ A01, A02, A03, and A04 are accepted; see WAVE_01.md. A01 focused tests pass when
 - **A23 전진(2026-09-22)**: ledger가 요구한 "다운로드된 quarantined 후보"를 실제로 만들었다. 격리된 headless Chrome(별도 user-data-dir, CDP 다운로드)으로 로컬 서버에서 받아 quarantine `0081;6ab1c494;Chrome;`이 붙었고, 그 sha256이 빌드 산출물의 manifest dmg 해시와 일치했다(`03383d71…`). `~/Downloads/Watchdog-0.2.0-macos.dmg`에 보관. 기계적 판정: quarantined DMG `rejected(source=no usable signature)`, 마운트된 앱 `rejected`, `ditto` 복사본 `rejected`. 남은 것은 승인 UI 통과 관찰이며, 수락 조건이 clean account이므로 현재 호스트(이미 설치됨)로는 불충분하다. 상세: `docs/evidence/a23-gatekeeper-20260922.md`.
 - **A13 검증 완료(2026-09-22)**: shipping-target UI 테스트를 실제로 실행해 9개 0 실패(61.7s)를 확인했다. 블로커는 framework 불일치가 아니라 UI 테스트 러너의 LocalAuthentication 프롬프트(`Code=-2 "Canceled by user."`)였고, 사용자 인증으로 해소됐다. 확인창 도달·취소 경로(terminate/force-quit)가 shipping 앱에서 검증됐다. 상세: `docs/evidence/a13-ui-runner-20260922.md`.
 - **remote CI 검증(2026-09-22)**: PR #18을 열어 `pull_request` 트리거로 원격 실행을 만들었다. 첫 실행(`0041bb1`)은 **Xcode 16.4가 `ProcessMonitor.swift:815`를 거부**해 실패했다 — `UNNotificationSettings`가 non-Sendable인데 MainActor 경계를 넘는 코드로, 로컬 Xcode 27은 허용하고 러너 기본 툴체인은 거부한다(`ci.yml`은 툴체인을 고정하지 않고 버전만 출력한다). 상태를 nonisolated 헬퍼에서 읽고 `Sendable` enum만 넘기도록 고친 뒤(`f22beed`) 실행 `35670379988`이 **12개 단계 전부 성공**했다 — unit tests, shipping UI safety tests, Debug/Release/Preview/Snapshot 빌드. B01/B03는 원격 검증 완료. B06은 `workflow_dispatch` 전용이고 기본 브랜치에 없어 GitHub이 워크플로 자체를 등록하지 않으므로 병합 후에만 가능하다.
-- **soak 관측(2026-09-22)**: popover를 AXPress로 여는 동안 candidate의 `fd`가 올랐다. 계열은 `38 → 40 → 38 → 51 → 60 → 60 → 60`으로, 상승은 에이전트의 popover 세션과 일치하고 이후 **평탄**하며 중간에 38로 되돌아오기도 했다(자원 해제). 단조 증가가 아니므로 연속 누수로 보이지 않는다. `rss`도 같은 구간에서 80MB → 127MB로 올라 평탄해졌다. 결론: popover 사용의 상주 비용으로 판단하며, 추가 통제 실험은 soak 완료 후로 미룬다.
+- **사람 경계 명시(2026-09-22, 소유자 파업 선언)**: 아래 항목은 소유자가 수행을 원하지 않는다. 이는 "완료"가 아니라 **명시적 경계**로 기록하며, 릴리스 준비 완료를 주장하지 않는다.
+  - `A23` Gatekeeper 승인: 승인 UI 통과 관찰 + clean account가 필요해 에이전트가 닫을 수 없다(quarantined 후보와 판정은 준비됨).
+  - `A29` sleep/wake 후 UI 관찰, `B07` 실제 알림 배너, `B08` 로그아웃 후 로그인 자동 실행, `B09` 키보드·VoiceOver 판정.
+  - 에이전트 경로가 이들을 대신할 수 없음은 실측으로 확인했다: AXPress로 연 popover는 앱이 활성화되지 않으면 콘텐츠가 실체화되지 않고, `감지 규칙` DisclosureGroup은 AXPress로 펼쳐지지 않으며, status item 클릭은 디스플레이 2개 + 메뉴바 숨김 환경에서 합성 입력이 닿지 않는다.
+
+- **릴리스 핀 정합 검증(2026-09-22)**: repo 규칙이 요구하는 4곳 동기화를 기계적으로 확인했고 **전부 일치**한다.
+  `INSTALL.md`·`README.md`는 ZIP `a5492e56…`과 DMG `082ac4d5…`를 함께 게시하고, `scripts/install.sh`는 `TAG=v0.2.0`/`EXPECTED_SHA256=a5492e56…`(자기가 받는 ZIP)로 고정한다.
+  GitHub API의 실제 릴리스 자산 digest도 ZIP `sha256:a5492e56b1f0e09684a640bf1eeb44daaf2aacd7c31349becdaeae36a8412791`, DMG `sha256:082ac4d5c071a714b8de2936a54dd759a8243d293f9b64ae6e07815f3d950877`로 동일하다.
+  즉 현재 공개된 `v0.2.0` 기준으로 문서·설치 스크립트·배포 자산이 어긋나지 않는다. 새 릴리스를 자를 때만 4곳을 함께 갱신하면 된다.
