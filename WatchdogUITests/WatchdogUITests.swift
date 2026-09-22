@@ -35,7 +35,7 @@ final class WatchdogUITests: XCTestCase {
         aboutButton.click()
 
         let version = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS '0.2.0' OR value CONTAINS '0.2.0'")
+            NSPredicate(format: "label CONTAINS '0.2.1' OR value CONTAINS '0.2.1'")
         ).firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 2))
 
