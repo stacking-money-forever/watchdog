@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-readonly TAG="v0.2.1"
-readonly ARCHIVE_NAME="Watchdog-0.2.1-macos.zip"
+readonly TAG="v0.2.2"
+readonly ARCHIVE_NAME="Watchdog-0.2.2-macos.zip"
 readonly ARCHIVE_URL="https://github.com/stacking-money-forever/watchdog/releases/download/${TAG}/${ARCHIVE_NAME}"
-readonly EXPECTED_SHA256="9153bef56fb0871cc10718d21b6351c47e64e9dea19d2374d51135d66d1bebd7"
+readonly EXPECTED_SHA256="ed87c89f65511aa1027c1d6b7270ec29fd0ad84d5034616569989c8089addd42"
 
 install_dir="${WATCHDOG_INSTALL_DIR:-$HOME/Applications}"
 launch_after_install=true
