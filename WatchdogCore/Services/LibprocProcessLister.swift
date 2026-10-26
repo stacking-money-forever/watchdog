@@ -28,13 +28,73 @@ enum ProcessListingError: LocalizedError, Sendable {
 /// so classification behaves identically: `executablePath` is argv[0] (what
 /// `ps comm` prints, e.g. `claude` for a versioned native install), falling back
 /// to the executable path and then the kernel's short name, like `ps`.
+/// Remembers argv[0] per process between samples. Reading `KERN_PROCARGS2`
+/// for every process on every 2 s sample dominated the sampling cost, yet
+/// argv[0] only changes on exec. The key includes the kernel's short name, which
+/// exec updates; entries also expire so an exec that keeps the same short
+/// name is picked up within `maximumAge`.
+final class CommandNameCache: @unchecked Sendable {
+    private struct Key: Hashable {
+        let pid: Int32
+        let startMicroseconds: UInt64
+        let shortName: String
+    }
+
+    private struct Entry {
+        let name: String?
+        let storedAt: ContinuousClock.Instant
+    }
+
+    private let lock = NSLock()
+    private var entries: [Key: Entry] = [:]
+    private let maximumAge: Duration
+    private let now: @Sendable () -> ContinuousClock.Instant
+
+    init(
+        maximumAge: Duration = .seconds(30),
+        now: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock().now }
+    ) {
+        self.maximumAge = maximumAge
+        self.now = now
+    }
+
+    fileprivate func name(
+        pid: Int32,
+        startMicroseconds: UInt64,
+        shortName: String,
+        read: () -> String?
+    ) -> String? {
+        let key = Key(pid: pid, startMicroseconds: startMicroseconds, shortName: shortName)
+        let instant = now()
+        if let entry = lock.withLock({ entries[key] }),
+           entry.storedAt.duration(to: instant) < maximumAge {
+            return entry.name
+        }
+        let name = read()
+        lock.withLock { entries[key] = Entry(name: name, storedAt: instant) }
+        return name
+    }
+
+    /// Drops entries for processes that are no longer listed.
+    fileprivate func retain(pids: Set<Int32>) {
+        lock.withLock {
+            entries = entries.filter { pids.contains($0.key.pid) }
+        }
+    }
+
+    var count: Int { lock.withLock { entries.count } }
+}
+
 enum LibprocProcessLister {
-    static func list(now: Date = Date()) throws -> [RawProcessRow] {
+    static func list(now: Date = Date(), cache: CommandNameCache? = nil) throws -> [RawProcessRow] {
         var arguments = ArgumentReader()
         let currentUserID = getuid()
-        return try allProcesses().compactMap { info in
-            row(from: info, now: now, currentUserID: currentUserID, arguments: &arguments)
+        let processes = try allProcesses()
+        let rows = processes.compactMap { info in
+            row(from: info, now: now, currentUserID: currentUserID, arguments: &arguments, cache: cache)
         }
+        cache?.retain(pids: Set(processes.map(\.kp_proc.p_pid)))
+        return rows
     }
 
     static func readRow(pid: Int32, now: Date = Date()) -> RawProcessRow? {
@@ -45,7 +105,7 @@ enum LibprocProcessLister {
             return nil
         }
         var arguments = ArgumentReader()
-        return row(from: info, now: now, currentUserID: getuid(), arguments: &arguments)
+        return row(from: info, now: now, currentUserID: getuid(), arguments: &arguments, cache: nil)
     }
 
     /// Every process on the system, including other users' and root's — the
@@ -82,7 +142,8 @@ enum LibprocProcessLister {
         from info: kinfo_proc,
         now: Date,
         currentUserID: UInt32,
-        arguments: inout ArgumentReader
+        arguments: inout ArgumentReader,
+        cache: CommandNameCache?
     ) -> RawProcessRow? {
         let pid = info.kp_proc.p_pid
         // Zombies have already exited; `ps` lists them as `<defunct>` but they
@@ -106,6 +167,20 @@ enum LibprocProcessLister {
 
         var info = info
         let shortName = withUnsafeBytes(of: &info.kp_proc.p_comm) { cString(from: $0) }
+        // argv[0] is only readable for this user's processes; skip the
+        // syscall for everyone else.
+        let commandName: String?
+        if userID == currentUserID {
+            if let cache {
+                commandName = cache.name(pid: pid, startMicroseconds: startMicroseconds, shortName: shortName) {
+                    arguments.commandName(pid: pid)
+                }
+            } else {
+                commandName = arguments.commandName(pid: pid)
+            }
+        } else {
+            commandName = nil
+        }
         let snapshot = ProcessSnapshot(
             id: pid,
             parentPID: info.kp_eproc.e_ppid,
@@ -118,7 +193,7 @@ enum LibprocProcessLister {
             elapsed: elapsedText(startSeconds: startSeconds, now: now),
             // Same order as `ps comm`: argv[0] when readable (own processes),
             // otherwise the executable path, otherwise the kernel's short name.
-            executablePath: arguments.commandName(pid: pid)
+            executablePath: commandName
                 ?? executablePath(pid: pid)
                 ?? shortName,
             startTimeMicroseconds: startMicroseconds
@@ -160,13 +235,14 @@ enum LibprocProcessLister {
         return clock
     }
 
+    /// `devname(3)` costs ~0.5 ms per call (it searches the device database),
+    /// which made tty lookup the dominant sampling cost. A device number's
+    /// name does not change, so resolve each one once.
+    private static let ttyNames = TTYNameCache()
+
     private static func ttyName(_ device: dev_t) -> String {
-        guard device != -1, device != 0,
-              let name = devname(device, mode_t(S_IFCHR))
-        else {
-            return "??"
-        }
-        return String(cString: name)
+        guard device != -1, device != 0 else { return "??" }
+        return ttyNames.name(for: device)
     }
 
     private static func executablePath(pid: Int32) -> String? {
@@ -182,6 +258,21 @@ enum LibprocProcessLister {
     fileprivate static func cString(from bytes: UnsafeRawBufferPointer) -> String {
         let end = bytes.firstIndex(of: 0) ?? bytes.endIndex
         return String(decoding: bytes[bytes.startIndex..<end], as: UTF8.self)
+    }
+}
+
+private final class TTYNameCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: [dev_t: String] = [:]
+
+    func name(for device: dev_t) -> String {
+        if let cached = lock.withLock({ names[device] }) { return cached }
+        let resolved = devname(device, mode_t(S_IFCHR)).map { String(cString: $0) } ?? "??"
+        lock.withLock {
+            if names.count > 4_096 { names.removeAll(keepingCapacity: true) }
+            names[device] = resolved
+        }
+        return resolved
     }
 }
 

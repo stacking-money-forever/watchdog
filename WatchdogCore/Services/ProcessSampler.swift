@@ -21,8 +21,14 @@ actor ProcessSampler: ProcessSampling {
     private var processCPUTracker = ProcessCPUTracker()
     private var systemCPUTracker = SystemCPUTracker()
 
-    /// Default sampler: in-process libproc enumeration, no child process.
-    init(lister: @escaping Lister = { try LibprocProcessLister.list() }) {
+    /// Default sampler: in-process enumeration, no child process, with argv[0]
+    /// cached across samples.
+    init() {
+        let cache = CommandNameCache()
+        self.lister = { try LibprocProcessLister.list(cache: cache) }
+    }
+
+    init(lister: @escaping Lister) {
         self.lister = lister
     }
 
