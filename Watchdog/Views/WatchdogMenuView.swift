@@ -231,8 +231,8 @@ struct WatchdogMenuView: View {
                         in: 5...120,
                         step: 5
                     )
-                    Toggle("임계값 초과 시 자동 일시 정지", isOn: $monitor.autoSuspendEnabled)
-                        .help("임계값을 넘은 프로세스에 SIGSTOP을 보내 안전하게 멈춥니다. 재개는 수동입니다.")
+                    Toggle("CPU 폭주 에이전트 자동 일시 정지", isOn: $monitor.autoSuspendEnabled)
+                        .help("CPU 임계값을 지속해서 넘긴 코딩 에이전트에만 SIGSTOP을 보냅니다. 메모리만 넘긴 프로세스와 일반 앱은 멈추지 않으며, 직접 재개한 프로세스는 다시 멈추지 않습니다.")
                     Toggle("시스템 알림", isOn: $monitor.notificationsEnabled)
                     if monitor.notificationAuthorization == .denied {
                         HStack {

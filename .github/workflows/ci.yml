@@ -72,6 +72,12 @@ jobs:
             -derivedDataPath DerivedData/release \
             build
 
+      - name: Release launch smoke (single instance, isolated)
+        run: ./scripts/launch-smoke.sh DerivedData/release/Build/Products/Release/Watchdog.app
+
+      - name: CLI end-to-end (disposable helpers, isolated ledger)
+        run: ./scripts/cli-e2e.sh --derived-data DerivedData/cli
+
       - name: Build Preview
         run: |
           xcodebuild \

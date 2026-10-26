@@ -40,10 +40,12 @@ cd watchdog
 ## 주요 기능
 
 - 앱 실행 직후 메뉴를 열지 않아도 2초 주기로 감시를 시작합니다.
+- 프로세스 목록과 작업 디렉터리를 `ps`·`lsof` 같은 하위 프로세스 없이 커널에서 직접 읽어, 시스템이 무거울 때도 샘플링이 실패하지 않습니다.
 - 프로세스 CPU 누적 시간의 구간별 차이와 실제 메모리 사용량을 확인합니다.
-- CPU·메모리 임계값을 지속해서 넘긴 프로세스를 이유와 함께 표시합니다. 고아 의심 에이전트는 경고가 아닌 정보로 표시합니다.
-- 지원하는 코딩 에이전트의 작업 디렉터리와 프로젝트명을 비동기로 조회하고, 해당 경로가 정리 가능한 워크트리인지 알려줍니다.
-- 감지 규칙에서 자동 일시 정지를 켜면 임계값을 넘은 프로세스에 되돌릴 수 있는 SIGSTOP을 보냅니다. 재개는 항상 수동입니다.
+- CPU·메모리 임계값을 지속해서 넘긴 프로세스를 이유와 함께 표시합니다. 임계값 근처에서 오르내리는 프로세스가 깜빡이지 않도록 해제 구간(CPU 80%, 메모리 90%)을 둡니다. 고아 의심 에이전트는 경고가 아닌 정보로 표시합니다.
+- 지원하는 코딩 에이전트의 작업 디렉터리와 프로젝트명을 조회하고, 해당 경로가 정리 가능한 워크트리인지 알려줍니다. Git 조회는 `--no-optional-locks`로 실행해 에이전트의 커밋을 방해하지 않습니다.
+- 감지 규칙에서 자동 일시 정지를 켜면 CPU 임계값을 지속해서 넘긴 코딩 에이전트에만 되돌릴 수 있는 SIGSTOP을 보냅니다. 메모리만 넘긴 프로세스나 일반 앱은 멈추지 않고, 직접 재개한 프로세스는 다시 멈추지 않습니다. 재개는 항상 수동입니다.
+- Watchdog이 멈춘 프로세스는 기록으로 남아 "주의 필요"에 계속 보이고, Watchdog을 종료할 때 멈춘 프로세스가 있으면 재개 후 종료할지 묻습니다.
 - 경고를 해당 프로세스가 종료될 때까지 무시하고 즉시 되돌릴 수 있습니다.
 - 현재 사용자 소유 프로세스를 일시 정지, 재개, 종료 또는 강제 종료합니다.
 - 첫 실행 시 로그인 항목에 자동 등록되며, 감지 규칙에서 끌 수 있습니다.
@@ -85,6 +87,26 @@ xcodebuild -project Watchdog.xcodeproj -scheme Watchdog -configuration Debug bui
 xcodebuild -project Watchdog.xcodeproj -scheme Watchdog -configuration Debug test
 xcodebuild -project Watchdog.xcodeproj -scheme Watchdog -configuration Release build
 ```
+
+### 검증용 CLI (`watchdog-cli`)
+
+앱과 같은 `WatchdogCore`(샘플링·감지·권한·제어)를 터미널에서 구동하는 개발·검증 도구입니다. 아직 배포 자산에는 포함되지 않습니다.
+
+```bash
+xcodebuild -project Watchdog.xcodeproj -scheme WatchdogCLI -configuration Debug -derivedDataPath DerivedData/cli build
+cli=DerivedData/cli/Build/Products/Debug/watchdog-cli
+$cli list --scope agents          # TOKEN(pid:시작시각:uid)과 함께 목록
+$cli watch --auto-suspend --json   # 앱과 같은 감지 엔진으로 지속 감시
+$cli terminate <TOKEN>             # 차단되고 무엇을 할지만 출력 (exit 3)
+$cli terminate <TOKEN> --force     # 실제 SIGTERM 후 종료 확인
+$cli stopped --resume-all          # Watchdog이 멈춘 프로세스 재개
+$cli doctor                        # 샘플링 비용과 환경 진단
+```
+
+- `terminate`·`force-quit`은 PID만으로 실행할 수 없고 TOKEN과 `--force`가 모두 필요합니다.
+- `--force`로도 PID 1, Watchdog 자신, 다른 사용자, 시스템 경로, 신원 불일치·확인 불가 대상은 거부됩니다(exit 4).
+- `scripts/cli-e2e.sh`는 직접 띄운 일회용 프로세스만 대상으로 전체 경로를 검증하고, 별도 정지 기록 파일(`WATCHDOG_LEDGER_PATH`)을 씁니다.
+- `scripts/launch-smoke.sh <Watchdog.app>`은 출시 실행 경로의 단일 인스턴스 동작을 로그인 항목 등록 없이 확인합니다.
 
 `WatchdogPreview`는 합성 프로세스 상태로 메뉴 화면과 접근성을 검증하는 개발 전용 창입니다. `WatchdogUITests`는 실제 프로세스에 시그널을 보내지 않습니다.
 

@@ -145,7 +145,11 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
         switch mode {
         case .normal:
             NSApplication.shared.setActivationPolicy(.accessory)
-            launchAtLoginController?.registerByDefaultIfNeeded()
+            // Launch smoke tests run the real launch path from a build
+            // directory; they must not register that build as a login item.
+            if ProcessInfo.processInfo.environment["WATCHDOG_DISABLE_LOGIN_ITEM"] != "1" {
+                launchAtLoginController?.registerByDefaultIfNeeded()
+            }
         case .unitTestHost:
             // The hosted test bundle must not register a DerivedData build as
             // a login item or touch the user's real state.
