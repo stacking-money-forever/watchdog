@@ -86,6 +86,24 @@ struct WatchdogMenuView: View {
         }
         // A pending confirmation must survive the popup closing (focus loss);
         // it is only cancelled explicitly or when its 30 s validity expires.
+        .onReceive(monitor.$processes) { _ in
+            dismissConfirmationIfInvalid()
+        }
+    }
+
+    /// A confirmation whose window expired or whose process is gone can only
+    /// fail; close it and say why instead of leaving the list disabled.
+    private func dismissConfirmationIfInvalid() {
+        guard let pending = pendingAction,
+              !monitor.isConfirmationValid(pending.confirmationRequest)
+        else { return }
+        pendingAction = nil
+        monitor.cancelDestructiveConfirmation(pending.confirmationRequest)
+        let stillListed = monitor.processes.contains { $0.identity == pending.process.identity }
+        let message = stillListed
+            ? ProcessControlError.confirmationExpired.localizedDescription
+            : ProcessControlError.processChanged.localizedDescription
+        showMenuFeedback(.init(isError: true, message: message))
     }
 
 
@@ -116,6 +134,7 @@ struct WatchdogMenuView: View {
                         pendingAction = nil
                         completeDestructiveAction(action)
                     }
+                    .accessibilityIdentifier("watchdog.destructive-confirmation.confirm")
                 }
             }
             .padding(20)
@@ -212,8 +231,8 @@ struct WatchdogMenuView: View {
                         in: 5...120,
                         step: 5
                     )
-                    Toggle("임계값 초과 시 자동 일시 정지", isOn: $monitor.autoSuspendEnabled)
-                        .help("임계값을 넘은 프로세스에 SIGSTOP을 보내 안전하게 멈춥니다. 재개는 수동입니다.")
+                    Toggle("CPU 폭주 에이전트 자동 일시 정지", isOn: $monitor.autoSuspendEnabled)
+                        .help("CPU 임계값을 지속해서 넘긴 코딩 에이전트에만 SIGSTOP을 보냅니다. 메모리만 넘긴 프로세스와 일반 앱은 멈추지 않으며, 직접 재개한 프로세스는 다시 멈추지 않습니다.")
                     Toggle("시스템 알림", isOn: $monitor.notificationsEnabled)
                     if monitor.notificationAuthorization == .denied {
                         HStack {
@@ -356,10 +375,11 @@ struct WatchdogMenuView: View {
             .accessibilityLabel("Watchdog 정보")
             .accessibilityIdentifier("watchdog.about")
 
-            Button("종료") {
+            Button("Watchdog 종료") {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("watchdog.quit")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -461,22 +481,11 @@ struct WatchdogMenuView: View {
     }
 
     private func outcomeText(_ outcome: ProcessActionOutcome) -> String {
-        switch outcome {
-        case .signalDelivered: return "신호 전달됨 · 실행 상태는 별도 확인 필요"
-        case .awaitingExit: return "신호 전달됨 · 종료 확인 중"
-        case .exited: return "종료 확인됨"
-        case .stillRunning: return "신호 후에도 실행 중"
-        case .identityChanged: return "PID가 다른 프로세스로 바뀜"
-        case .verificationFailed: return "종료 여부를 확인하지 못함"
-        case let .failed(message): return "작업 실패: \(message)"
-        }
+        outcome.localizedDescription
     }
 
     private func outcomeIsError(_ outcome: ProcessActionOutcome) -> Bool {
-        switch outcome {
-        case .stillRunning, .identityChanged, .verificationFailed, .failed: return true
-        case .signalDelivered, .awaitingExit, .exited: return false
-        }
+        outcome.isError
     }
 
     private func observationText(_ lastUpdated: Date) -> String {

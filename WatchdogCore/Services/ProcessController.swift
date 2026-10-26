@@ -10,6 +10,16 @@ enum ProcessControlError: LocalizedError, Sendable {
     case processChanged
     case identityLookupFailed
     case signalFailed(signal: Int32, code: Int32, message: String)
+    /// The confirmation was already completed or cancelled.
+    case confirmationNotPending
+    /// The confirmation stayed open longer than its validity window.
+    case confirmationExpired
+    /// A newer observation replaced the one the action was authorized against.
+    case observationRefreshed
+    /// The user chose to ignore this process; controls are disabled for it.
+    case processIgnored
+    /// A multi-signal plan stopped after some signals were already delivered.
+    indirect case partiallyApplied(delivered: [Int32], failure: ProcessControlError)
 
     var errorDescription: String? {
         switch self {
@@ -22,6 +32,23 @@ enum ProcessControlError: LocalizedError, Sendable {
         case .identityLookupFailed: return "프로세스 상태를 안전하게 확인할 수 없습니다."
         case let .signalFailed(signal, code, message):
             return "시그널 \(signal) 전송 실패(\(code)): \(message)"
+        case .confirmationNotPending: return "이 확인 요청은 이미 처리되었거나 취소되었습니다."
+        case .confirmationExpired: return "확인 시간이 지나 작업을 취소했습니다. 다시 시도하세요."
+        case .observationRefreshed: return "작업 중 프로세스 정보가 갱신되어 취소했습니다. 다시 시도하세요."
+        case .processIgnored: return "무시 중인 프로세스는 제어할 수 없습니다. 무시를 해제한 뒤 다시 시도하세요."
+        case let .partiallyApplied(delivered, failure):
+            let names = delivered.map(ProcessControlError.signalName).joined(separator: ", ")
+            return "\(names) 전송 후 중단됨: \(failure.errorDescription ?? "알 수 없는 오류")"
+        }
+    }
+
+    static func signalName(_ signal: Int32) -> String {
+        switch signal {
+        case SIGSTOP: return "SIGSTOP"
+        case SIGCONT: return "SIGCONT"
+        case SIGTERM: return "SIGTERM"
+        case SIGKILL: return "SIGKILL"
+        default: return "시그널 \(signal)"
         }
     }
 }
@@ -175,22 +202,30 @@ struct ProcessController: Sendable {
 
         let first = try validatedFacts(for: authorization.identity)
         let signals = Self.signalPlan(for: authorization.action, isSuspended: first.isSuspended)
-        for signal in signals {
-            guard now() < authorization.expiresAt else {
-                throw ProcessControlError.authorizationExpired
-            }
-            _ = try validatedFacts(for: authorization.identity)
+        var delivered: [Int32] = []
+        do {
+            for signal in signals {
+                guard now() < authorization.expiresAt else {
+                    throw ProcessControlError.authorizationExpired
+                }
+                _ = try validatedFacts(for: authorization.identity)
 
-            // macOS provides no atomic identity-check-and-signal operation. Full live facts
-            // are checked immediately before each signal to minimize the irreducible TOCTOU.
-            guard signalSender(authorization.identity.pid, signal) == 0 else {
-                let code = errno
-                throw ProcessControlError.signalFailed(
-                    signal: signal,
-                    code: code,
-                    message: String(cString: strerror(code))
-                )
+                // macOS provides no atomic identity-check-and-signal operation. Full live facts
+                // are checked immediately before each signal to minimize the irreducible TOCTOU.
+                guard signalSender(authorization.identity.pid, signal) == 0 else {
+                    let code = errno
+                    throw ProcessControlError.signalFailed(
+                        signal: signal,
+                        code: code,
+                        message: String(cString: strerror(code))
+                    )
+                }
+                delivered.append(signal)
             }
+        } catch let error as ProcessControlError where !delivered.isEmpty {
+            // Never let a half-applied plan read as a plain failure: a stopped
+            // process that was continued but not terminated is running again.
+            throw ProcessControlError.partiallyApplied(delivered: delivered, failure: error)
         }
     }
 
@@ -205,7 +240,9 @@ struct ProcessController: Sendable {
         }
         switch factsReader(identity.pid) {
         case let .found(facts):
-            guard facts.identity == identity else { throw ProcessControlError.processChanged }
+            guard facts.identity == identity, !facts.isZombie else {
+                throw ProcessControlError.processChanged
+            }
             guard facts.identity.userID != 0,
                   facts.identity.userID == currentUserID(),
                   facts.identity.startTimeMicroseconds != 0,
@@ -225,6 +262,58 @@ struct ProcessController: Sendable {
         case .resume: return [SIGCONT]
         case .terminate: return isSuspended ? [SIGCONT, SIGTERM] : [SIGTERM]
         case .forceQuit: return [SIGKILL]
+        }
+    }
+}
+
+/// What Watchdog knows about the result of the last action on a process.
+enum ProcessActionOutcome: Equatable, Sendable {
+    case signalDelivered
+    case suspended
+    case resumed
+    case awaitingExit
+    case exited
+    case stillRunning
+    case identityChanged
+    case verificationFailed
+    case failed(String)
+
+    var localizedDescription: String {
+        switch self {
+        case .signalDelivered: return "신호 전달됨 · 실행 상태는 별도 확인 필요"
+        case .suspended: return "일시 정지됨 · 재개할 때까지 멈춰 있음"
+        case .resumed: return "재개됨"
+        case .awaitingExit: return "신호 전달됨 · 종료 확인 중"
+        case .exited: return "종료 확인됨"
+        case .stillRunning: return "신호 후에도 실행 중"
+        case .identityChanged: return "PID가 다른 프로세스로 바뀜"
+        case .verificationFailed: return "종료 여부를 확인하지 못함"
+        case let .failed(message): return "작업 실패: \(message)"
+        }
+    }
+
+    var isError: Bool {
+        switch self {
+        case .stillRunning, .identityChanged, .verificationFailed, .failed: return true
+        case .signalDelivered, .suspended, .resumed, .awaitingExit, .exited: return false
+        }
+    }
+}
+
+/// Classifies one post-termination liveness lookup. `nil` means the exact
+/// process is still running. A lookup failure is reported as
+/// `.verificationFailed`; pollers should retry before settling on it.
+enum TerminationVerdict {
+    static func outcome(
+        for lookup: LiveProcessLookup,
+        identity: ProcessIdentity
+    ) -> ProcessActionOutcome? {
+        switch lookup {
+        case .absent: return .exited
+        case let .found(facts) where facts.identity != identity: return .identityChanged
+        case let .found(facts) where facts.isZombie: return .exited
+        case .failed: return .verificationFailed
+        case .found: return nil
         }
     }
 }

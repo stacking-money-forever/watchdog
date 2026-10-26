@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct ProcessSample: Sendable {
@@ -6,48 +7,42 @@ struct ProcessSample: Sendable {
     let systemMemory: SystemMemorySnapshot?
 }
 
-actor ProcessSampler {
-    typealias Runner = @Sendable (String, [String], Duration) async throws -> String
+/// Seam for `ProcessMonitor` and the CLI so the refresh pipeline can be driven
+/// deterministically in tests.
+protocol ProcessSampling: Sendable {
+    func sample() async throws -> ProcessSample
+}
 
-    private let runner: Runner
+actor ProcessSampler: ProcessSampling {
+    typealias Runner = @Sendable (String, [String], Duration) async throws -> String
+    typealias Lister = @Sendable () async throws -> [RawProcessRow]
+
+    private let lister: Lister
     private var processCPUTracker = ProcessCPUTracker()
     private var systemCPUTracker = SystemCPUTracker()
 
-    init(runner: @escaping Runner = { executable, arguments, deadline in
-        try await CommandRunner.run(executable, arguments: arguments, deadline: deadline)
-    }) {
-        self.runner = runner
+    /// Default sampler: in-process libproc enumeration, no child process.
+    init(lister: @escaping Lister = { try LibprocProcessLister.list() }) {
+        self.lister = lister
+    }
+
+    /// Legacy `/bin/ps` sampler, kept as a parity oracle for the libproc path.
+    init(runner: @escaping Runner) {
+        self.lister = { try await Self.psRows(runner: runner) }
     }
 
     func sample() async throws -> ProcessSample {
-        let output = try await runner(
-            "/bin/ps",
-            ["-axo", "pid=,ppid=,pgid=,uid=,tty=,rss=,state=,etime=,comm="],
-            .seconds(2)
-        )
-        let parsed = ProcessListParser.parse(output)
-
+        let rows = try await lister()
         let uptime = DispatchTime.now().uptimeNanoseconds
-        var processes: [ProcessSnapshot] = []
-        var metricPoints: [(identity: ProcessIdentity, totalCPUTimeNanoseconds: UInt64)] = []
 
-        for var snapshot in parsed {
-            guard let metrics = ProcessMetricsReader.read(pid: snapshot.id),
-                  metrics.userID == snapshot.userID
-            else {
-                processes.append(snapshot)
-                continue
-            }
-
-            snapshot.startTimeMicroseconds = metrics.startTimeMicroseconds
-            snapshot.residentBytes = metrics.residentBytes
-            metricPoints.append((snapshot.identity, metrics.totalCPUTimeNanoseconds))
-            processes.append(snapshot)
+        let metricPoints = rows.compactMap { row in
+            row.totalCPUTimeNanoseconds.map { (identity: row.snapshot.identity, totalCPUTimeNanoseconds: $0) }
         }
-
         let percentages = processCPUTracker.percentages(for: metricPoints, at: uptime)
-        for index in processes.indices {
-            processes[index].cpuPercent = percentages[processes[index].identity] ?? 0
+        let processes = rows.map { row in
+            var snapshot = row.snapshot
+            snapshot.cpuPercent = percentages[snapshot.identity] ?? 0
+            return snapshot
         }
 
         let systemCPUPercent = SystemMetricsReader.cpuTicks().flatMap {
@@ -59,6 +54,28 @@ actor ProcessSampler {
             systemCPUPercent: systemCPUPercent,
             systemMemory: SystemMetricsReader.memory()
         )
+    }
+
+    static func psRows(runner: Runner) async throws -> [RawProcessRow] {
+        let output = try await runner(
+            "/bin/ps",
+            ["-axo", "pid=,ppid=,pgid=,uid=,tty=,rss=,state=,etime=,comm="],
+            .seconds(2)
+        )
+        return ProcessListParser.parse(output).map { snapshot in
+            var snapshot = snapshot
+            guard let metrics = ProcessMetricsReader.read(pid: snapshot.id),
+                  metrics.userID == snapshot.userID
+            else {
+                return RawProcessRow(snapshot: snapshot, totalCPUTimeNanoseconds: nil)
+            }
+            snapshot.startTimeMicroseconds = metrics.startTimeMicroseconds
+            snapshot.residentBytes = metrics.residentBytes
+            return RawProcessRow(
+                snapshot: snapshot,
+                totalCPUTimeNanoseconds: metrics.totalCPUTimeNanoseconds
+            )
+        }
     }
 }
 
@@ -81,8 +98,8 @@ actor WorkingDirectoryResolver {
         let negativeTTL: Duration
 
         static let standard = Policy(
-            maximumConcurrentLookups: 2,
-            lookupBudgetPerGeneration: 8,
+            maximumConcurrentLookups: 4,
+            lookupBudgetPerGeneration: 32,
             lookupDeadline: .milliseconds(1_500),
             cacheCapacity: 512,
             positiveTTL: .seconds(60),
@@ -298,19 +315,26 @@ actor WorkingDirectoryResolver {
         }
     }
 
-    private static func defaultLookup(pid: Int32, deadline: Duration) async -> String? {
-        do {
-            let output = try await CommandRunner.run(
-                "/usr/sbin/lsof",
-                arguments: ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
-                deadline: deadline
-            )
-            return output
-                .split(whereSeparator: \Character.isNewline)
-                .first(where: { $0.hasPrefix("n/") })
-                .map { String($0.dropFirst()) }
-        } catch {
-            return nil
+    /// Reads the working directory in-process through libproc
+    /// (`PROC_PIDVNODEPATHINFO`) instead of spawning `lsof`: microseconds, no
+    /// helper slot, no deadline. Returns nil when the process is gone or not
+    /// inspectable by this user.
+    static func defaultLookup(pid: Int32, deadline: Duration) async -> String? {
+        currentDirectory(pid: pid)
+    }
+
+    static func currentDirectory(pid: Int32) -> String? {
+        guard pid > 0 else { return nil }
+        var info = proc_vnodepathinfo()
+        let size = Int32(MemoryLayout<proc_vnodepathinfo>.stride)
+        let result = withUnsafeMutablePointer(to: &info) {
+            proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, $0, size)
         }
+        guard result == size else { return nil }
+        let path = withUnsafeBytes(of: &info.pvi_cdir.vip_path) { bytes -> String in
+            let end = bytes.firstIndex(of: 0) ?? bytes.endIndex
+            return String(decoding: bytes[bytes.startIndex..<end], as: UTF8.self)
+        }
+        return path.isEmpty ? nil : path
     }
 }

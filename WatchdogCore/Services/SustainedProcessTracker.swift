@@ -2,8 +2,13 @@ import Foundation
 
 /// Shared accumulation logic for processes that stay above a threshold for a
 /// sustained period. Evidence resets after a sampling failure (missing
-/// snapshot), a below-threshold sample, an ignored process, or an observation
-/// gap longer than `continuityGap`.
+/// snapshot), a sample below the release threshold, an ignored process, or an
+/// observation gap longer than `continuityGap`.
+///
+/// Entering requires `metric >= threshold`; once evidence exists it is kept
+/// while `metric >= releaseThreshold`. The band stops a process hovering at
+/// the threshold (a single-threaded busy loop measures 97–100%) from flapping
+/// in and out and never accumulating a sustained window.
 struct SustainedProcessTracker<Metric: Comparable> {
     private struct State {
         var since: ContinuousClock.Instant
@@ -25,6 +30,7 @@ struct SustainedProcessTracker<Metric: Comparable> {
         snapshots: [ProcessSnapshot],
         metric: (ProcessSnapshot) -> Metric,
         threshold: Metric,
+        releaseThreshold: Metric? = nil,
         sustainedFor duration: TimeInterval,
         ignoredProcesses: Set<ProcessIdentity>,
         at instant: ContinuousClock.Instant
@@ -34,10 +40,13 @@ struct SustainedProcessTracker<Metric: Comparable> {
 
         var sustainedProcesses: Set<ProcessIdentity> = []
 
+        let release = min(releaseThreshold ?? threshold, threshold)
         for snapshot in snapshots {
+            let value = metric(snapshot)
+            let isTracked = states[snapshot.identity] != nil
             guard snapshot.canControl,
                   !ignoredProcesses.contains(snapshot.identity),
-                  metric(snapshot) >= threshold
+                  value >= threshold || (isTracked && value >= release)
             else {
                 states.removeValue(forKey: snapshot.identity)
                 continue

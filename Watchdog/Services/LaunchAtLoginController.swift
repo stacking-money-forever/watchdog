@@ -49,6 +49,10 @@ final class LaunchAtLoginController: ObservableObject {
 
     private enum Keys {
         static let userOptedOut = "launchAtLogin.userOptedOut"
+        /// Set once Watchdog has been registered (by itself or the user).
+        /// Removing the login item in System Settings afterwards is a user
+        /// decision that a later launch must not silently undo.
+        static let didAutoRegister = "launchAtLogin.didAutoRegister"
     }
 
     init(
@@ -95,12 +99,20 @@ final class LaunchAtLoginController: ObservableObject {
     }
 
     func registerByDefaultIfNeeded() {
-        guard !defaults.bool(forKey: Keys.userOptedOut), service.status == .notRegistered else {
+        let status = service.status
+        if status == .enabled || status == .requiresApproval {
+            defaults.set(true, forKey: Keys.didAutoRegister)
+        }
+        guard !defaults.bool(forKey: Keys.userOptedOut),
+              !defaults.bool(forKey: Keys.didAutoRegister),
+              status == .notRegistered
+        else {
             return
         }
 
         do {
             try service.register()
+            defaults.set(true, forKey: Keys.didAutoRegister)
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

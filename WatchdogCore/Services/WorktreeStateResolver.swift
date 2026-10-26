@@ -31,6 +31,9 @@ struct WorktreeState: Equatable, Sendable {
     let verdict: WorktreeVerdict
     /// Human-readable detail: branch name, dirty file count, etc.
     let detail: String?
+    /// The lookup could not run to completion; the verdict is not evidence
+    /// about the worktree and must only be cached briefly.
+    var isTransient = false
 }
 
 enum WorktreeStateError: Error, Sendable {
@@ -50,6 +53,7 @@ actor WorktreeStateResolver {
         let cacheCapacity: Int
         let positiveTTL: Duration
         let negativeTTL: Duration
+        var transientTTL: Duration = .seconds(4)
 
         static let standard = Policy(
             maximumConcurrentLookups: 2,
@@ -184,7 +188,14 @@ actor WorktreeStateResolver {
         at instant: ContinuousClock.Instant
     ) -> WorktreeState?? {
         guard var entry = cache[path] else { return nil }
-        let ttl = entry.state == nil ? policy.negativeTTL : policy.positiveTTL
+        let ttl: Duration
+        if entry.state?.isTransient == true {
+            ttl = policy.transientTTL
+        } else if entry.state == nil || entry.state?.verdict == .unavailable {
+            ttl = policy.negativeTTL
+        } else {
+            ttl = policy.positiveTTL
+        }
         guard instant - entry.resolvedAt < ttl else {
             cache[path] = nil
             return nil
@@ -220,15 +231,21 @@ actor WorktreeStateResolver {
         }
         // One batched invocation per path keeps helper-process pressure bounded.
         // --porcelain=v2 lets us count dirty entries; -b exposes the branch.
-        guard let output = try? await runGit(
-            path: path,
-            arguments: ["status", "--porcelain=v2", "--branch"],
-            runner: runner,
-            deadline: deadline
-        ) else {
+        do {
+            let output = try await runGit(
+                path: path,
+                arguments: ["status", "--porcelain=v2", "--branch"],
+                runner: runner,
+                deadline: deadline
+            )
+            return parseStatus(output: output, path: path)
+        } catch let error as CommandRunnerError where error.isTransient {
+            // The probe never produced an answer (timeout, cancellation, no
+            // helper slot). Report it without caching it as a verdict.
+            return WorktreeState(path: path, verdict: .unavailable, detail: nil, isTransient: true)
+        } catch {
             return WorktreeState(path: path, verdict: .unavailable, detail: nil)
         }
-        return parseStatus(output: output, path: path)
     }
 
     static func parseStatus(output: String, path: String) -> WorktreeState {
@@ -274,7 +291,10 @@ actor WorktreeStateResolver {
     ) async throws -> String {
         try await runner(
             "/usr/bin/git",
-            ["-C", path] + arguments,
+            // Never take `.git/index.lock`: a read-only probe must not make the
+            // agent's own `git add`/`commit` fail. Disable fsmonitor so no
+            // daemon can outlive the deadline holding the output pipe.
+            ["--no-optional-locks", "-c", "core.fsmonitor=false", "-C", path] + arguments,
             deadline
         )
     }

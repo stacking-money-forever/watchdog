@@ -316,7 +316,7 @@ final class ProcessMonitorTests: XCTestCase {
         do {
             try await monitor.completeDestructiveConfirmation(request)
             XCTFail("A confirmation must remain bound to the original process identity")
-        } catch ProcessControlError.staleObservation {
+        } catch ProcessControlError.processChanged {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -351,7 +351,7 @@ final class ProcessMonitorTests: XCTestCase {
             do {
                 try await monitor.completeDestructiveConfirmation(request)
                 XCTFail("A cancelled confirmation must not be consumable")
-            } catch ProcessControlError.staleObservation {
+            } catch ProcessControlError.confirmationNotPending {
             } catch {
                 XCTFail("Unexpected error: \(error)")
             }
@@ -433,7 +433,7 @@ final class ProcessMonitorTests: XCTestCase {
         do {
             try await completion.value
             XCTFail("An authorization consumed for an old generation must not signal")
-        } catch ProcessControlError.staleObservation {
+        } catch ProcessControlError.observationRefreshed {
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -652,7 +652,11 @@ final class ProcessMonitorTests: XCTestCase {
     }
 
     private func makeDefaults() -> UserDefaults {
-        let defaults = UserDefaults(suiteName: "dev.justn.watchdog.tests.\(UUID().uuidString)")!
+        // One fixed suite, cleared per test: a per-test UUID suite leaves a plist
+        // in ~/Library/Preferences on every run. XCTest runs these serially.
+        let suiteName = "dev.justn.watchdog.tests"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
         defaults.set(false, forKey: "notificationsEnabled")
         return defaults
     }

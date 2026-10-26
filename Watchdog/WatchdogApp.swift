@@ -48,55 +48,29 @@ private enum WatchdogUITestFixtureHost {
 }
 #endif
 
+/// Single-instance lock. Acquired in `WatchdogApp.init` before monitoring
+/// starts, so a second launch never samples, notifies, or auto-suspends before
+/// it exits.
 @MainActor
-final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
-    private enum InstanceLockResult {
+enum WatchdogInstanceLock {
+    enum Result {
         case acquired
         case heldByAnotherInstance
         case unavailable
+        case notRequired
     }
 
-    private var instanceLockFileDescriptor: Int32 = -1
-    var launchAtLoginController: LaunchAtLoginController?
+    private(set) static var result: Result?
+    private static var fileDescriptor: Int32 = -1
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        #if DEBUG
-        let arguments = ProcessInfo.processInfo.arguments
-        let isUITestFixture = WatchdogUITestFixture.isActive(in: arguments)
-        if !isUITestFixture {
-            switch acquireInstanceLock() {
-            case .heldByAnotherInstance:
-                activateExistingInstanceIfPresent()
-                NSApplication.shared.terminate(nil)
-                return
-            case .acquired, .unavailable:
-                break
-            }
-        }
-        NSApplication.shared.setActivationPolicy(isUITestFixture ? .regular : .accessory)
-        if !isUITestFixture {
-            launchAtLoginController?.registerByDefaultIfNeeded()
-        }
-        if isUITestFixture {
-            Task { @MainActor in
-                await Task.yield()
-                WatchdogUITestFixtureHost.showWindowIfNeeded()
-                NSApplication.shared.activate(ignoringOtherApps: true)
-            }
-        }
-        #else
-        if case .heldByAnotherInstance = acquireInstanceLock() {
-            activateExistingInstanceIfPresent()
-            NSApplication.shared.terminate(nil)
-            return
-        }
-        NSApplication.shared.setActivationPolicy(.accessory)
-        launchAtLoginController?.registerByDefaultIfNeeded()
-        #endif
+    static func acquireIfNeeded(required: Bool) -> Result {
+        if let result { return result }
+        let acquired = required ? acquire() : .notRequired
+        result = acquired
+        return acquired
     }
 
-    private func acquireInstanceLock() -> InstanceLockResult {
-        guard !isRunningUnitTests else { return .acquired }
+    private static func acquire() -> Result {
         guard let applicationSupport = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
@@ -132,8 +106,104 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
                 ? .heldByAnotherInstance
                 : .unavailable
         }
-        instanceLockFileDescriptor = descriptor
+        fileDescriptor = descriptor
         return .acquired
+    }
+}
+
+/// How this process was launched. Computed once so the lock, login item,
+/// ledger, and sampling decisions can never disagree.
+enum WatchdogLaunchMode {
+    case normal
+    case unitTestHost
+    #if DEBUG
+    case uiTestFixture
+    #endif
+
+    static var current: WatchdogLaunchMode {
+        #if DEBUG
+        if WatchdogUITestFixture.isActive(in: ProcessInfo.processInfo.arguments) {
+            return .uiTestFixture
+        }
+        #endif
+        return isRunningUnitTests ? .unitTestHost : .normal
+    }
+}
+
+@MainActor
+final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
+    var launchAtLoginController: LaunchAtLoginController?
+    var monitor: ProcessMonitor?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let mode = WatchdogLaunchMode.current
+        if case .heldByAnotherInstance = WatchdogInstanceLock.result {
+            activateExistingInstanceIfPresent()
+            NSApplication.shared.terminate(nil)
+            return
+        }
+        switch mode {
+        case .normal:
+            NSApplication.shared.setActivationPolicy(.accessory)
+            // Launch smoke tests run the real launch path from a build
+            // directory; they must not register that build as a login item.
+            if ProcessInfo.processInfo.environment["WATCHDOG_DISABLE_LOGIN_ITEM"] != "1" {
+                launchAtLoginController?.registerByDefaultIfNeeded()
+            }
+        case .unitTestHost:
+            // The hosted test bundle must not register a DerivedData build as
+            // a login item or touch the user's real state.
+            NSApplication.shared.setActivationPolicy(.accessory)
+        #if DEBUG
+        case .uiTestFixture:
+            NSApplication.shared.setActivationPolicy(.regular)
+            Task { @MainActor in
+                await Task.yield()
+                WatchdogUITestFixtureHost.showWindowIfNeeded()
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            }
+        #endif
+        }
+    }
+
+    /// Never leave a process frozen behind Watchdog: if it stopped anything
+    /// that is still stopped, ask before quitting.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let monitor, case .normal = WatchdogLaunchMode.current else { return .terminateNow }
+        // Logout, restart, and shutdown end every user process anyway; a
+        // modal prompt there would only stall or cancel the logout.
+        if NSAppleEventManager.shared().currentAppleEvent?
+            .attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason)) != nil {
+            return .terminateNow
+        }
+        monitor.reconcileLedger()
+        let stopped = monitor.watchdogSuspended
+        guard !stopped.isEmpty else { return .terminateNow }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Watchdog이 일시 정지한 프로세스 \(stopped.count)개가 멈춰 있습니다"
+        alert.informativeText = stopped.prefix(5)
+            .map { "• \($0.displayName) (PID \($0.pid))" }
+            .joined(separator: "\n")
+            + (stopped.count > 5 ? "\n…" : "")
+            + "\n\n그대로 종료하면 직접 재개하기 전까지 멈춘 상태로 남습니다. 다음 실행 때 다시 알려 드립니다."
+        alert.addButton(withTitle: "재개 후 종료")
+        alert.addButton(withTitle: "그대로 종료")
+        alert.addButton(withTitle: "취소")
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            Task { @MainActor in
+                _ = await monitor.resumeAllWatchdogSuspended()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        case .alertSecondButtonReturn:
+            return .terminateNow
+        default:
+            return .terminateCancel
+        }
     }
 
     private func activateExistingInstanceIfPresent() {
@@ -199,7 +269,26 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
 
     @MainActor
     init() {
-        let monitor = ProcessMonitor()
+        let mode = WatchdogLaunchMode.current
+        let lock: WatchdogInstanceLock.Result
+        switch mode {
+        case .normal: lock = WatchdogInstanceLock.acquireIfNeeded(required: true)
+        default: lock = WatchdogInstanceLock.acquireIfNeeded(required: false)
+        }
+        let isPrimaryInstance: Bool
+        if case .heldByAnotherInstance = lock { isPrimaryInstance = false } else { isPrimaryInstance = true }
+        let monitor: ProcessMonitor
+        switch mode {
+        case .normal:
+            monitor = ProcessMonitor(ledger: .standard())
+        default:
+            // Tests and fixtures never read or write the user's real defaults
+            // or suspension ledger.
+            let suite = "dev.justn.watchdog.isolated"
+            let defaults = UserDefaults(suiteName: suite) ?? .standard
+            defaults.removePersistentDomain(forName: suite)
+            monitor = ProcessMonitor(defaults: defaults, ledger: .inMemory())
+        }
         let launchAtLogin = LaunchAtLoginController(automaticallyRegister: false)
         var shouldShowFixtureWindow = false
         #if DEBUG
@@ -239,7 +328,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
                 highMemoryProcesses: [Self.fixtureProcesses[0].identity],
                 updatedAt: Date(timeIntervalSinceNow: -6)
             )
-        } else if usesLiveFixture || !isRunningUnitTests {
+        } else if usesLiveFixture || (mode == .normal && isPrimaryInstance) {
             monitor.start()
         }
         if shouldShowFixtureWindow {
@@ -247,12 +336,15 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
             WatchdogUITestFixtureHost.launchAtLogin = launchAtLogin
         }
         #else
-        monitor.start()
+        if isPrimaryInstance {
+            monitor.start()
+        }
         #endif
         _monitor = StateObject(wrappedValue: monitor)
         _launchAtLogin = StateObject(wrappedValue: launchAtLogin)
         showsFixtureWindow = shouldShowFixtureWindow
         appDelegate.launchAtLoginController = launchAtLogin
+        appDelegate.monitor = monitor
     }
 
     var body: some Scene {

@@ -127,7 +127,11 @@ final class AutoSuspendPolicyTests: XCTestCase {
     }
 
     private func makeDefaults() -> UserDefaults {
-        let defaults = UserDefaults(suiteName: "dev.justn.watchdog.tests.\(UUID().uuidString)")!
+        // One fixed suite, cleared per test: a per-test UUID suite leaves a plist
+        // in ~/Library/Preferences on every run. XCTest runs these serially.
+        let suiteName = "dev.justn.watchdog.tests"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
         defaults.set(false, forKey: "notificationsEnabled")
         return defaults
     }

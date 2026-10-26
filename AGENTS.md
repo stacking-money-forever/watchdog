@@ -15,6 +15,9 @@
 ## Engineering contract
 
 - `project.yml` is the Xcode project source of truth; regenerate with `xcodegen generate` after target or file-layout changes.
+- UI-free logic lives in `WatchdogCore/` (shared sources compiled into the app, previews, and `watchdog-cli`). Detection decisions belong in `MonitorEngine`; `ProcessMonitor` only adapts them to the main actor and UI. Verify behaviour changes through `watchdog-cli` and `scripts/cli-e2e.sh` as well as unit tests.
+- `proc_taskinfo` CPU totals are Mach ticks; always convert with `MachTime` before computing percentages.
+- Every SIGSTOP Watchdog sends (app, auto-suspend, or CLI) must be recorded in the shared `SuspensionLedger` and removed on resume/terminate.
 - Preserve the default-safe behavior: never add automatic `SIGKILL`, never control system/other-user processes, and require confirmation for destructive actions.
 - Every signal path must consume a fresh, single-use authorization bound to the exact action, process identity, and observation generation. Never restore snapshot-only controller overloads.
 - Stale or failed sampling remains display-only and must disable suspend, resume, terminate, and force quit.
@@ -22,6 +25,6 @@
 - Publish raw samples before optional working-directory enrichment. Keep resolver concurrency, lookup budget, deadlines, positive/negative caches, and generation-safe merging bounded.
 - Use monotonic time for sustained thresholds and reset evidence after sampling failures or excessive observation gaps.
 - Add deterministic unit tests for parsing, lineage classification, sustained-threshold logic, authorization replay, identity mismatch, stale gating, ignore/undo, resolver timeout/cancellation, and settings normalization.
-- UI tests launch the shipping `Watchdog` target with DEBUG-only synthetic fixtures and must never send real process signals.
-- Before handoff, regenerate the project, run the Watchdog scheme's unit and shipping-target UI tests, build Debug and Release, and perform a launch/process-presence smoke check.
+- UI tests launch the shipping `Watchdog` target with DEBUG-only synthetic fixtures and must never send real process signals. The CLI end-to-end script may signal only the disposable processes it starts.
+- Before handoff, regenerate the project, run the Watchdog scheme's unit and shipping-target UI tests, build Debug and Release, run `scripts/cli-e2e.sh`, and run `scripts/launch-smoke.sh` on the Release app.
 - A notarized-distribution claim additionally requires Developer ID/hardened-runtime inspection, accepted notarization, stapling, post-staple Gatekeeper assessment, and retained long-run resource evidence. Never fabricate or weaken credentialed gates when release credentials are unavailable.

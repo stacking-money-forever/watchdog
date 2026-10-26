@@ -34,8 +34,12 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(aboutButton.waitForExistence(timeout: 5))
         aboutButton.click()
 
+        // The test bundle shares MARKETING_VERSION with the app; never hard-code
+        // the release number here.
+        let expected = Bundle(for: Self.self)
+            .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
         let version = app.staticTexts.matching(
-            NSPredicate(format: "label CONTAINS '0.2.1' OR value CONTAINS '0.2.1'")
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", expected, expected)
         ).firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 2))
 
@@ -126,7 +130,7 @@ final class WatchdogUITests: XCTestCase {
 
         let title = app.staticTexts["프로세스를 종료할까요?"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["종료"].exists)
+        XCTAssertTrue(app.buttons["watchdog.destructive-confirmation.confirm"].exists)
         app.windows.firstMatch.buttons["취소"].click()
         XCTAssertTrue(title.waitForNonExistence(timeout: 2))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
@@ -143,7 +147,7 @@ final class WatchdogUITests: XCTestCase {
 
         let title = app.staticTexts["프로세스를 강제 종료할까요?"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["강제 종료"].exists)
+        XCTAssertTrue(app.buttons["watchdog.destructive-confirmation.confirm"].exists)
         app.windows.firstMatch.buttons["취소"].click()
         XCTAssertTrue(title.waitForNonExistence(timeout: 2))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
