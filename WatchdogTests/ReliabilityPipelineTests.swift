@@ -346,6 +346,24 @@ final class ReliabilityPipelineTests: XCTestCase {
         XCTAssertLessThan(me.cpuPercent, 400, "measured \(me.cpuPercent)%")
     }
 
+    func testCachedListingMatchesUncachedListing() throws {
+        let cache = CommandNameCache()
+        _ = try LibprocProcessLister.list(cache: cache)
+        let cached = try LibprocProcessLister.list(cache: cache)
+        let fresh = try LibprocProcessLister.list()
+        let freshNames = Dictionary(fresh.map { ($0.snapshot.identity, $0.snapshot.executablePath) }, uniquingKeysWith: { first, _ in first })
+        var compared = 0
+        var mismatches: [String] = []
+        for row in cached {
+            guard let name = freshNames[row.snapshot.identity] else { continue }
+            compared += 1
+            if name != row.snapshot.executablePath { mismatches.append("\(row.snapshot.id): \(name) vs \(row.snapshot.executablePath)") }
+        }
+        XCTAssertGreaterThan(compared, 20)
+        XCTAssertLessThanOrEqual(mismatches.count, 2, mismatches.joined(separator: "\n"))
+        XCTAssertGreaterThan(cache.count, 0)
+    }
+
     func testElapsedTextMatchesPsFormat() {
         let now = Date(timeIntervalSince1970: 1_000_000)
         XCTAssertEqual(LibprocProcessLister.elapsedText(startSeconds: 1_000_000 - 65, now: now), "01:05")

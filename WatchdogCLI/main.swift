@@ -559,9 +559,12 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
         appRunning: false
     )
     var rows: [RawProcessRow] = []
+    // First run is cold; the next two reuse the argv cache the app keeps
+    // between samples.
+    let cache = CommandNameCache()
     for _ in 0..<3 {
         let start = clock.now
-        rows = try LibprocProcessLister.list()
+        rows = try LibprocProcessLister.list(cache: cache)
         let elapsed = start.duration(to: clock.now)
         report.libprocMilliseconds.append(Double(elapsed.components.attoseconds) / 1e15 + Double(elapsed.components.seconds) * 1_000)
     }
@@ -592,7 +595,7 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
         return CLIExitCode.success
     }
     let libproc = report.libprocMilliseconds.map { String(format: "%.1f", $0) }.joined(separator: " / ")
-    print("libproc 샘플링     \(libproc) ms (3회)")
+    print("샘플링(커널 직접)  \(libproc) ms (첫 회 cold, 이후 캐시)")
     print("/bin/ps 비교       \(report.psMilliseconds.map { String(format: "%.1f ms", $0) } ?? "실패")")
     print("프로세스           전체 \(report.processCount) · 내 소유 \(report.ownProcessCount) · 에이전트 \(report.agentCount) (cwd 확인 \(report.agentsWithWorkingDirectory))")
     print("앱 설정            CPU \(Int(settings.cpuThreshold))% · 지속 \(Int(settings.sustainedDuration))초 · 메모리 \(settings.memoryThresholdGB)GB · 자동 정지 \(settings.autoSuspendEnabled ? "켬" : "끔")")
