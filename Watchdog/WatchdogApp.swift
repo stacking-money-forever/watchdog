@@ -170,6 +170,12 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
     /// that is still stopped, ask before quitting.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let monitor, case .normal = WatchdogLaunchMode.current else { return .terminateNow }
+        // Logout, restart, and shutdown end every user process anyway; a
+        // modal prompt there would only stall or cancel the logout.
+        if NSAppleEventManager.shared().currentAppleEvent?
+            .attributeDescriptor(forKeyword: AEKeyword(kAEQuitReason)) != nil {
+            return .terminateNow
+        }
         monitor.reconcileLedger()
         let stopped = monitor.watchdogSuspended
         guard !stopped.isEmpty else { return .terminateNow }
@@ -278,7 +284,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
         default:
             // Tests and fixtures never read or write the user's real defaults
             // or suspension ledger.
-            let suite = "dev.justn.watchdog.isolated.\(getpid())"
+            let suite = "dev.justn.watchdog.isolated"
             let defaults = UserDefaults(suiteName: suite) ?? .standard
             defaults.removePersistentDomain(forName: suite)
             monitor = ProcessMonitor(defaults: defaults, ledger: .inMemory())

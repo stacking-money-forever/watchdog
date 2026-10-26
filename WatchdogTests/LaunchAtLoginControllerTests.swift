@@ -92,8 +92,10 @@ final class LaunchAtLoginControllerTests: XCTestCase {
     }
 
     private func makeDefaults() -> (UserDefaults, String) {
-        let suiteName = "dev.justn.watchdog.launch-at-login-tests.\(UUID().uuidString)"
-        return (UserDefaults(suiteName: suiteName)!, suiteName)
+        let suiteName = "dev.justn.watchdog.launch-at-login-tests"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return (defaults, suiteName)
     }
 }
 
