@@ -59,8 +59,15 @@ final class SuspensionLedger: @unchecked Sendable {
         SuspensionLedger(fileURL: nil)
     }
 
+    /// Overrides the ledger location; used by the CLI end-to-end script so a
+    /// verification run never touches the user's real ledger.
+    static let pathEnvironmentKey = "WATCHDOG_LEDGER_PATH"
+
     /// `~/Library/Application Support/Watchdog/suspensions.json`
-    static func standard() -> SuspensionLedger {
+    static func standard(environment: [String: String] = ProcessInfo.processInfo.environment) -> SuspensionLedger {
+        if let override = environment[pathEnvironmentKey], !override.isEmpty {
+            return SuspensionLedger(fileURL: URL(fileURLWithPath: override))
+        }
         guard let support = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask

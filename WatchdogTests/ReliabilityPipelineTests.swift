@@ -285,12 +285,26 @@ final class ReliabilityPipelineTests: XCTestCase {
             if mine.userID != ps.userID { mismatches.append("\(ps.id) uid \(ps.userID)≠\(mine.userID)") }
             if mine.tty != ps.tty { mismatches.append("\(ps.id) tty \(ps.tty)≠\(mine.tty)") }
             if mine.isSuspended != ps.isSuspended { mismatches.append("\(ps.id) stopped \(ps.state)≠\(mine.state)") }
-            if mine.executablePath != ps.executablePath {
+            // Names drive agent and session-host classification, which only
+            // matters for this user's processes. For other users ps prints an
+            // unresolved launch path or short name where libproc returns the
+            // resolved path (and ps mangles non-ASCII paths); both are
+            // protected regardless.
+            if ps.userID == getuid(), mine.executablePath != ps.executablePath {
                 mismatches.append("\(ps.id) comm ps=\(ps.executablePath) libproc=\(mine.executablePath)")
             }
         }
         XCTAssertGreaterThan(compared, 20)
         XCTAssertLessThanOrEqual(mismatches.count, max(3, compared / 100), mismatches.joined(separator: "\n"))
+
+        // Coverage: other users' and root's processes must be enumerated too;
+        // orphan classification walks through root-owned ancestors such as
+        // `login`. A per-process libproc read silently drops them.
+        let psPIDs = Set(psRows.map(\.snapshot).filter { $0.state.first != "Z" }.map(\.id))
+        let missing = psPIDs.subtracting(libproc.keys)
+        XCTAssertLessThanOrEqual(missing.count, max(3, psPIDs.count / 50), "missing PIDs: \(missing.sorted().prefix(20))")
+        XCTAssertNotNil(libproc[1], "launchd (root) must be enumerated")
+        XCTAssertTrue(rows.contains { $0.snapshot.userID == 0 }, "root-owned processes must be enumerated")
     }
 
     func testLibprocSeesCurrentProcessWithWorkingDirectory() throws {
@@ -303,6 +317,33 @@ final class ReliabilityPipelineTests: XCTestCase {
             WorkingDirectoryResolver.currentDirectory(pid: getpid()),
             FileManager.default.currentDirectoryPath
         )
+    }
+
+    func testMachTicksConvertToNanoseconds() {
+        // Apple Silicon timebase 125/3: 24 ticks = 1 µs.
+        XCTAssertEqual(MachTime.nanoseconds(fromTicks: 24_000_000, numer: 125, denom: 3), 1_000_000_000)
+        XCTAssertEqual(MachTime.nanoseconds(fromTicks: 1_000, numer: 1, denom: 1), 1_000)
+        XCTAssertEqual(MachTime.nanoseconds(fromTicks: .max, numer: 125, denom: 3), .max)
+    }
+
+    func testBusyThreadMeasuresNearFullCore() async throws {
+        let stop = BusyFlag()
+        let thread = Thread {
+            var counter: UInt64 = 0
+            while !stop.isSet { counter &+= 1 }
+            _ = counter
+        }
+        thread.start()
+        defer { stop.set() }
+        let sampler = ProcessSampler()
+        _ = try await sampler.sample()
+        try await Task.sleep(for: .milliseconds(1_000))
+        let sample = try await sampler.sample()
+        let me = try XCTUnwrap(sample.processes.first { $0.id == getpid() })
+        // One spinning thread is ~100% of a core. Before the tick conversion
+        // this read ~2.4% on Apple Silicon and CPU alerts never fired.
+        XCTAssertGreaterThan(me.cpuPercent, 60, "measured \(me.cpuPercent)%")
+        XCTAssertLessThan(me.cpuPercent, 400, "measured \(me.cpuPercent)%")
     }
 
     func testElapsedTextMatchesPsFormat() {
@@ -428,6 +469,13 @@ private actor ScriptedSampler: ProcessSampling {
             throw CommandRunnerError.timedOut(executable: "sampler")
         }
     }
+}
+
+private final class BusyFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stopped = false
+    var isSet: Bool { lock.withLock { stopped } }
+    func set() { lock.withLock { stopped = true } }
 }
 
 private final class FactsBox: @unchecked Sendable {

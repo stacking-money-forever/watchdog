@@ -491,7 +491,7 @@ final class ProcessMonitor: ObservableObject {
             if let process = live[record.identity], process.isSuspended {
                 retained.append(record)
             } else {
-                try? ledger.remove(record.identity)
+                _ = try? ledger.remove(record.identity)
             }
         }
         if retained != watchdogSuspended { watchdogSuspended = retained }
@@ -741,14 +741,14 @@ final class ProcessMonitor: ObservableObject {
         } catch let ProcessControlError.partiallyApplied(delivered, failure) where delivered.contains(SIGCONT) {
             // A stopped process was continued but not terminated: it is
             // running again and no longer Watchdog-suspended.
-            try? ledger.remove(process.identity)
+            _ = try? ledger.remove(process.identity)
             reconcileLedger()
             throw ProcessControlError.partiallyApplied(delivered: delivered, failure: failure)
         }
 
         switch action {
         case .suspend:
-            try? ledger.record(
+            _ = try? ledger.record(
                 SuspensionRecord(
                     identity: process.identity,
                     executablePath: process.executablePath,
@@ -758,11 +758,11 @@ final class ProcessMonitor: ObservableObject {
             )
             recordActionOutcome(.suspended, for: process.identity)
         case .resume:
-            try? ledger.remove(process.identity)
+            _ = try? ledger.remove(process.identity)
             engine.recordUserResume(process.identity)
             recordActionOutcome(.resumed, for: process.identity)
         case .terminate, .forceQuit:
-            try? ledger.remove(process.identity)
+            _ = try? ledger.remove(process.identity)
             recordActionOutcome(.awaitingExit, for: process.identity)
             pollTerminationOutcome(for: process.identity)
         }

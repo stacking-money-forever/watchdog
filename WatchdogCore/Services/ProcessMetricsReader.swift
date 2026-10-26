@@ -30,6 +30,28 @@ enum LiveProcessLookup: Sendable {
     case failed
 }
 
+/// `proc_taskinfo.pti_total_user/system` are in Mach absolute-time ticks, not
+/// nanoseconds. On Apple Silicon one tick is 125/3 ns, so treating ticks as
+/// nanoseconds under-reports CPU by ~41.7× (a 100% busy loop reads 2.4%).
+enum MachTime {
+    private static let timebase: (numer: UInt64, denom: UInt64) = {
+        var info = mach_timebase_info_data_t()
+        guard mach_timebase_info(&info) == KERN_SUCCESS, info.denom != 0 else { return (1, 1) }
+        return (UInt64(info.numer), UInt64(info.denom))
+    }()
+
+    static func nanoseconds(fromTicks ticks: UInt64) -> UInt64 {
+        nanoseconds(fromTicks: ticks, numer: timebase.numer, denom: timebase.denom)
+    }
+
+    static func nanoseconds(fromTicks ticks: UInt64, numer: UInt64, denom: UInt64) -> UInt64 {
+        guard numer != denom, denom != 0 else { return ticks }
+        let product = ticks.multipliedFullWidth(by: numer)
+        guard product.high < denom else { return UInt64.max }
+        return denom.dividingFullWidth(product).quotient
+    }
+}
+
 enum ProcessMetricsReader {
     static func read(pid: Int32) -> RawProcessMetrics? {
         var bsdInfo = proc_bsdinfo()
@@ -50,7 +72,9 @@ enum ProcessMetricsReader {
 
         return RawProcessMetrics(
             startTimeMicroseconds: bsdInfo.pbi_start_tvsec * 1_000_000 + bsdInfo.pbi_start_tvusec,
-            totalCPUTimeNanoseconds: taskInfo.pti_total_user + taskInfo.pti_total_system,
+            totalCPUTimeNanoseconds: MachTime.nanoseconds(
+                fromTicks: taskInfo.pti_total_user + taskInfo.pti_total_system
+            ),
             residentBytes: taskInfo.pti_resident_size,
             userID: bsdInfo.pbi_uid
         )

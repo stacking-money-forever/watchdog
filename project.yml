@@ -110,6 +110,8 @@ targets:
         PRODUCT_MODULE_NAME: WatchdogCLI
         PRODUCT_BUNDLE_IDENTIFIER: dev.justn.watchdog.cli
         ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: YES
+        CREATE_INFOPLIST_SECTION_IN_BINARY: YES
   WatchdogE2EHelper:
     type: tool
     platform: macOS

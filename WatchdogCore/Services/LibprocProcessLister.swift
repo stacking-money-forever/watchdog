@@ -20,102 +20,113 @@ enum ProcessListingError: LocalizedError, Sendable {
     }
 }
 
-/// Enumerates processes in-process through libproc instead of spawning
+/// Enumerates processes in-process (sysctl + libproc) instead of spawning
 /// `/bin/ps`. There is no child process, no output parsing, no helper-slot
 /// contention with `git`, and no deadline that can fail under load.
 ///
 /// Field semantics deliberately mirror `ps -axo pid,ppid,pgid,uid,tty,rss,state,etime,comm`
 /// so classification behaves identically: `executablePath` is argv[0] (what
 /// `ps comm` prints, e.g. `claude` for a versioned native install), falling back
-/// to the executable path and then the kernel's short name.
+/// to the executable path and then the kernel's short name, like `ps`.
 enum LibprocProcessLister {
     static func list(now: Date = Date()) throws -> [RawProcessRow] {
-        let pids = try allPIDs()
         var arguments = ArgumentReader()
-        var rows: [RawProcessRow] = []
-        rows.reserveCapacity(pids.count)
-
-        for pid in pids where pid > 0 {
-            guard let row = readRow(pid: pid, now: now, arguments: &arguments) else { continue }
-            rows.append(row)
+        let currentUserID = getuid()
+        return try allProcesses().compactMap { info in
+            row(from: info, now: now, currentUserID: currentUserID, arguments: &arguments)
         }
-        return rows
     }
 
     static func readRow(pid: Int32, now: Date = Date()) -> RawProcessRow? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0, size == MemoryLayout<kinfo_proc>.stride else {
+            return nil
+        }
         var arguments = ArgumentReader()
-        return readRow(pid: pid, now: now, arguments: &arguments)
+        return row(from: info, now: now, currentUserID: getuid(), arguments: &arguments)
     }
 
-    private static func allPIDs() throws -> [Int32] {
-        // The process table can grow between the size probe and the read;
-        // retry with headroom until the result fits.
-        var capacity = Int(proc_listallpids(nil, 0))
-        guard capacity > 0 else {
-            throw ProcessListingError.enumerationFailed(code: errno)
-        }
+    /// Every process on the system, including other users' and root's — the
+    /// same `KERN_PROC_ALL` table `ps -ax` reads. Per-process `proc_pidinfo`
+    /// would silently skip processes this user may not inspect, and orphan
+    /// classification needs those ancestors (e.g. a root-owned `login`).
+    private static func allProcesses() throws -> [kinfo_proc] {
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
         for _ in 0..<4 {
-            capacity += 128
-            var buffer = [Int32](repeating: 0, count: capacity)
-            let count = buffer.withUnsafeMutableBytes {
-                proc_listallpids($0.baseAddress, Int32($0.count))
-            }
-            guard count > 0 else {
+            var size = 0
+            guard sysctl(&mib, 4, nil, &size, nil, 0) == 0 else {
                 throw ProcessListingError.enumerationFailed(code: errno)
             }
-            if Int(count) < capacity {
-                return Array(buffer.prefix(Int(count)))
+            // The table can grow between the size probe and the read.
+            size += 64 * MemoryLayout<kinfo_proc>.stride
+            var buffer = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride)
+            let result = buffer.withUnsafeMutableBytes { raw -> Int32 in
+                var length = raw.count
+                let status = sysctl(&mib, 4, raw.baseAddress, &length, nil, 0)
+                size = length
+                return status
             }
-            capacity = Int(count) * 2
+            if result == 0 {
+                return Array(buffer.prefix(size / MemoryLayout<kinfo_proc>.stride))
+            }
+            guard errno == ENOMEM else {
+                throw ProcessListingError.enumerationFailed(code: errno)
+            }
         }
         throw ProcessListingError.enumerationFailed(code: ENOMEM)
     }
 
-    private static func readRow(
-        pid: Int32,
+    private static func row(
+        from info: kinfo_proc,
         now: Date,
+        currentUserID: UInt32,
         arguments: inout ArgumentReader
     ) -> RawProcessRow? {
-        var bsdInfo = proc_bsdinfo()
-        let bsdSize = Int32(MemoryLayout<proc_bsdinfo>.stride)
-        let bsdResult = withUnsafeMutablePointer(to: &bsdInfo) {
-            proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, $0, bsdSize)
-        }
-        guard bsdResult == bsdSize else { return nil }
+        let pid = info.kp_proc.p_pid
         // Zombies have already exited; `ps` lists them as `<defunct>` but they
-        // cannot be acted on and only add noise.
-        guard bsdInfo.pbi_status != UInt32(SZOMB) else { return nil }
+        // cannot be acted on and only add noise. pid 0 is the kernel.
+        guard pid > 0, Int32(info.kp_proc.p_stat) != SZOMB else { return nil }
 
+        let start = info.kp_proc.p_un.__p_starttime
+        let startSeconds = UInt64(max(0, start.tv_sec))
+        let startMicroseconds = startSeconds * 1_000_000 + UInt64(max(0, start.tv_usec))
+        let userID = info.kp_eproc.e_ucred.cr_uid
+
+        // Task info is only readable for this user's processes, as with `ps`.
         var taskInfo = proc_taskinfo()
-        let taskSize = Int32(MemoryLayout<proc_taskinfo>.stride)
-        let taskResult = withUnsafeMutablePointer(to: &taskInfo) {
-            proc_pidinfo(pid, PROC_PIDTASKINFO, 0, $0, taskSize)
+        var hasTaskInfo = false
+        if userID == currentUserID {
+            let taskSize = Int32(MemoryLayout<proc_taskinfo>.stride)
+            hasTaskInfo = withUnsafeMutablePointer(to: &taskInfo) {
+                proc_pidinfo(pid, PROC_PIDTASKINFO, 0, $0, taskSize)
+            } == taskSize
         }
-        let hasTaskInfo = taskResult == taskSize
 
-        let startMicroseconds = bsdInfo.pbi_start_tvsec * 1_000_000 + bsdInfo.pbi_start_tvusec
+        var info = info
+        let shortName = withUnsafeBytes(of: &info.kp_proc.p_comm) { cString(from: $0) }
         let snapshot = ProcessSnapshot(
             id: pid,
-            parentPID: Int32(bitPattern: bsdInfo.pbi_ppid),
-            processGroupID: Int32(bitPattern: bsdInfo.pbi_pgid),
-            userID: bsdInfo.pbi_uid,
-            tty: ttyName(bsdInfo.e_tdev),
+            parentPID: info.kp_eproc.e_ppid,
+            processGroupID: info.kp_eproc.e_pgid,
+            userID: userID,
+            tty: ttyName(info.kp_eproc.e_tdev),
             cpuPercent: 0,
             residentBytes: hasTaskInfo ? taskInfo.pti_resident_size : 0,
-            state: stateLetter(bsdInfo.pbi_status),
-            elapsed: elapsedText(
-                startSeconds: bsdInfo.pbi_start_tvsec,
-                now: now
-            ),
+            state: stateLetter(UInt32(info.kp_proc.p_stat)),
+            elapsed: elapsedText(startSeconds: startSeconds, now: now),
+            // Same order as `ps comm`: argv[0] when readable (own processes),
+            // otherwise the executable path, otherwise the kernel's short name.
             executablePath: arguments.commandName(pid: pid)
                 ?? executablePath(pid: pid)
-                ?? shortName(bsdInfo),
+                ?? shortName,
             startTimeMicroseconds: startMicroseconds
         )
         return RawProcessRow(
             snapshot: snapshot,
             totalCPUTimeNanoseconds: hasTaskInfo
-                ? taskInfo.pti_total_user + taskInfo.pti_total_system
+                ? MachTime.nanoseconds(fromTicks: taskInfo.pti_total_user + taskInfo.pti_total_system)
                 : nil
         )
     }
@@ -149,9 +160,9 @@ enum LibprocProcessLister {
         return clock
     }
 
-    private static func ttyName(_ device: UInt32) -> String {
-        guard device != UInt32.max, device != 0,
-              let name = devname(dev_t(bitPattern: device), mode_t(S_IFCHR))
+    private static func ttyName(_ device: dev_t) -> String {
+        guard device != -1, device != 0,
+              let name = devname(device, mode_t(S_IFCHR))
         else {
             return "??"
         }
@@ -166,13 +177,6 @@ enum LibprocProcessLister {
             decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) },
             as: UTF8.self
         )
-    }
-
-    private static func shortName(_ info: proc_bsdinfo) -> String {
-        var info = info
-        let name = withUnsafeBytes(of: &info.pbi_name) { cString(from: $0) }
-        if !name.isEmpty { return name }
-        return withUnsafeBytes(of: &info.pbi_comm) { cString(from: $0) }
     }
 
     fileprivate static func cString(from bytes: UnsafeRawBufferPointer) -> String {
