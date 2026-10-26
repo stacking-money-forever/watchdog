@@ -83,7 +83,7 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
     let tty: String
     var cpuPercent: Double
     var residentBytes: UInt64
-    let state: String
+    var state: String
     let elapsed: String
     let executablePath: String
     var startTimeMicroseconds: UInt64 = 0

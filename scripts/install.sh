@@ -8,6 +8,8 @@ readonly EXPECTED_SHA256="ed87c89f65511aa1027c1d6b7270ec29fd0ad84d5034616569989c
 
 install_dir="${WATCHDOG_INSTALL_DIR:-$HOME/Applications}"
 launch_after_install=true
+link_cli=false
+cli_dir="$HOME/.local/bin"
 
 usage() {
   cat <<'EOF'
@@ -18,6 +20,9 @@ Usage: scripts/install.sh [options]
 Options:
   --install-dir PATH  Install into PATH instead of ~/Applications
   --no-launch         Install without launching Watchdog
+  --link-cli          Also link watchdog-cli into ~/.local/bin (a symlink into
+                      the installed app; never replaces a regular file)
+  --cli-dir PATH      Link watchdog-cli into PATH instead (implies --link-cli)
   -h, --help          Show this help
 
 The installer downloads only from the official GitHub release, verifies its
@@ -35,6 +40,16 @@ while (($#)); do
     --no-launch)
       launch_after_install=false
       shift
+      ;;
+    --link-cli)
+      link_cli=true
+      shift
+      ;;
+    --cli-dir)
+      [[ $# -ge 2 ]] || { echo "Missing value for --cli-dir" >&2; exit 2; }
+      cli_dir="$2"
+      link_cli=true
+      shift 2
       ;;
     -h|--help)
       usage
@@ -162,6 +177,26 @@ launch_services="/System/Library/Frameworks/CoreServices.framework/Versions/Curr
 version="$(defaults read "$target_app/Contents/Info" CFBundleShortVersionString)"
 build="$(defaults read "$target_app/Contents/Info" CFBundleVersion)"
 printf 'Installed Watchdog %s (%s) at %s\n' "$version" "$build" "$target_app"
+
+cli_executable="$target_app/Contents/MacOS/watchdog-cli"
+if $link_cli; then
+  if [[ ! -x "$cli_executable" ]]; then
+    echo "This release does not include watchdog-cli; skipped linking." >&2
+  else
+    mkdir -p "$cli_dir"
+    cli_link="$cli_dir/watchdog-cli"
+    if [[ -e "$cli_link" && ! -L "$cli_link" ]]; then
+      echo "Not linking: $cli_link exists and is not a symlink. Remove it or use --cli-dir." >&2
+    else
+      ln -sfn "$cli_executable" "$cli_link"
+      printf 'Linked %s -> %s\n' "$cli_link" "$cli_executable"
+      case ":$PATH:" in
+        *":$cli_dir:"*) ;;
+        *) printf 'Note: %s is not on your PATH.\n' "$cli_dir" ;;
+      esac
+    fi
+  fi
+fi
 
 if $launch_after_install; then
   open "$target_app"

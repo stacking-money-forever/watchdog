@@ -89,6 +89,14 @@ struct WatchdogMenuView: View {
         .onReceive(monitor.$processes) { _ in
             dismissConfirmationIfInvalid()
         }
+        .onAppear {
+            monitor.isPresented = true
+            monitor.refreshNotificationAuthorization()
+            launchAtLogin.refresh()
+        }
+        .onDisappear {
+            monitor.isPresented = false
+        }
     }
 
     /// A confirmation whose window expired or whose process is gone can only
@@ -214,7 +222,7 @@ struct WatchdogMenuView: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    Slider(value: $monitor.threshold, in: 25...300, step: 5)
+                    Slider(value: $monitor.threshold, in: min(25, monitor.threshold)...max(300, monitor.threshold), step: 5)
 
                     HStack {
                         Text("프로세스 메모리 임계값")
@@ -223,12 +231,14 @@ struct WatchdogMenuView: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    Slider(value: $monitor.memoryThresholdGB, in: 0.5...16, step: 0.5)
+                    Slider(value: $monitor.memoryThresholdGB, in: min(0.5, monitor.memoryThresholdGB)...max(16, monitor.memoryThresholdGB), step: 0.5)
 
                     Stepper(
                         "임계값 유지 시간: \(Int(monitor.sustainedDuration))초",
                         value: $monitor.sustainedDuration,
-                        in: 5...120,
+                        // A value set from the CLI or defaults may sit outside
+                        // the usual range; keep it reachable and visible.
+                        in: min(5, monitor.sustainedDuration)...max(120, monitor.sustainedDuration),
                         step: 5
                     )
                     Toggle("CPU 폭주 에이전트 자동 일시 정지", isOn: $monitor.autoSuspendEnabled)
@@ -272,27 +282,42 @@ struct WatchdogMenuView: View {
         .padding(.vertical, 12)
     }
 
+    /// At most one transient message: an explicit menu action wins over a
+    /// background one.
+    private var currentFeedback: (message: String, isError: Bool)? {
+        if let feedback = menuActionFeedback { return (feedback.message, feedback.isError) }
+        if let feedback = monitor.actionFeedback { return (feedback.message, feedback.kind == .error) }
+        return nil
+    }
+
+    /// Rows show their own outcome, so the banner only summarizes failures,
+    /// one line at most, so stacked banners can never squeeze the list away.
+    private var outcomeBanner: (text: String, isError: Bool)? {
+        let failures = outcomeSummaries.filter(\.isError)
+        guard let first = failures.first else { return nil }
+        let extra = failures.count > 1 ? " 외 \(failures.count - 1)건" : ""
+        return (first.text + extra, true)
+    }
+
     private var processList: some View {
-        VStack(spacing: 8) {
-            if let feedback = menuActionFeedback {
+        let visible = visibleProcesses
+        return VStack(spacing: 8) {
+            if let feedback = currentFeedback {
                 feedbackBanner(feedback.message, isError: feedback.isError)
                     .padding(.horizontal, 12)
             }
 
-            if let feedback = monitor.actionFeedback {
-                feedbackBanner(feedback.message, isError: feedback.kind == .error)
+            if let banner = outcomeBanner {
+                feedbackBanner(banner.text, isError: banner.isError)
                     .padding(.horizontal, 12)
-            }
-
-            ForEach(outcomeSummaries) { summary in
-                feedbackBanner(summary.text, isError: summary.isError)
-                    .padding(.horizontal, 12)
+                    .accessibilityIdentifier("watchdog.outcome-banner")
             }
 
             if let samplingError = monitor.samplingError, !monitor.processes.isEmpty {
                 Label("새 정보를 가져오지 못했습니다: \(samplingError)", systemImage: "exclamationmark.triangle")
                     .font(.caption)
                     .foregroundStyle(.orange)
+                    .lineLimit(2)
                     .padding(.horizontal, 12)
             }
 
@@ -302,7 +327,7 @@ struct WatchdogMenuView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(samplingError)
                 )
-            } else if visibleProcesses.isEmpty {
+            } else if visible.isEmpty {
                 ContentUnavailableView(
                     emptyTitle,
                     systemImage: scope == .attention ? "checkmark.shield" : "magnifyingglass",
@@ -311,12 +336,15 @@ struct WatchdogMenuView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 7) {
-                        ForEach(visibleProcesses) { process in
+                        // Keyed by full identity, not PID: a reused PID is a
+                        // different row and never inherits another's controls.
+                        ForEach(visible, id: \.identity) { process in
                             ProcessRow(
                                 process: process,
                                 actionability: monitor.actionability(of: process),
                                 alertReasons: monitor.alertReasons(for: process),
                                 isIgnored: monitor.isIgnored(process),
+                                isSuspendedByWatchdog: monitor.isSuspendedByWatchdog(process),
                                 actionOutcome: actionOutcome(for: process),
                                 onSuspend: { monitor.suspend(process) },
                                 onResume: { monitor.resume(process) },
@@ -334,6 +362,7 @@ struct WatchdogMenuView: View {
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
                 }
+                .accessibilityIdentifier("watchdog.process-list")
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -418,12 +447,6 @@ struct WatchdogMenuView: View {
         case .agents: "지원하는 코딩 에이전트를 실행하거나 검색어를 바꿔보세요."
         case .all: "다른 프로세스 이름, PID 또는 프로젝트를 검색해보세요."
         }
-    }
-
-    private var windowHeight: CGFloat {
-        let rows = CGFloat(min(visibleProcesses.count, 7)) * 60
-        let rules = showsRules ? CGFloat(225) : 0
-        return min(720, max(420, 200 + rows + rules))
     }
 
     private var memorySummary: String {

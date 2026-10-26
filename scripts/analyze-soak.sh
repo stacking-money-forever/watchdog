@@ -72,7 +72,7 @@ awk -F, -v expected="$expected" -v interval="$interval" '
     next
   }
   {
-    if (NF != 5 || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+(\.[0-9]+)?$/ || $4 !~ /^[0-9]+$/ || $5 !~ /^[0-9]+$/) {
+    if (NF != 5 || $2 !~ /^[0-9]+$/ || $3 !~ /^[0-9]+(\.[0-9]+)?$/ || $4 !~ /^[0-9]+$/ || ($5 !~ /^[0-9]+$/ && $5 != "-")) {
       print "malformed sample at line " NR > "/dev/stderr"; exit 2
     }
     ts = parse_timestamp($1)
@@ -90,14 +90,25 @@ awk -F, -v expected="$expected" -v interval="$interval" '
     count++
     rss = $2 + 0
     fd = $4 + 0
-    heartbeat = $5 + 0
+    rss_at[count] = rss
+    cpu_total += $3 + 0
+    if ($3 + 0 > max_cpu) max_cpu = $3 + 0
+    # A soak without a disposable helper records "-" for every heartbeat;
+    # the column must be all numeric or all "-", never mixed.
+    has_heartbeat = ($5 != "-")
+    if (count == 1) {
+      heartbeat_mode = has_heartbeat
+    } else if (has_heartbeat != heartbeat_mode) {
+      print "mixed heartbeat column at line " NR > "/dev/stderr"; exit 2
+    }
+    heartbeat = has_heartbeat ? $5 + 0 : 0
     if (count == 1) {
       first_rss = rss; first_fd = fd; first_heartbeat = heartbeat
       max_rss = rss; max_fd = fd
     }
     if (rss > max_rss) max_rss = rss
     if (fd > max_fd) max_fd = fd
-    if (count > 1 && heartbeat <= previous_heartbeat) {
+    if (heartbeat_mode && count > 1 && heartbeat <= previous_heartbeat) {
       print "non-increasing heartbeat at line " NR > "/dev/stderr"; exit 2
     }
     previous_heartbeat = heartbeat
@@ -108,7 +119,16 @@ awk -F, -v expected="$expected" -v interval="$interval" '
     printf "expected_samples=%d\nobserved_samples=%d\n", expected, count
     printf "rss_kb_first=%d\nrss_kb_last=%d\nrss_kb_max=%d\n", first_rss, last_rss, max_rss
     printf "fd_first=%d\nfd_last=%d\nfd_max=%d\n", first_fd, last_fd, max_fd
-    printf "heartbeat_first=%d\nheartbeat_last=%d\n", first_heartbeat, last_heartbeat
+    if (heartbeat_mode) {
+      printf "heartbeat_first=%d\nheartbeat_last=%d\n", first_heartbeat, last_heartbeat
+    } else {
+      print "heartbeat=not_recorded"
+    }
+    printf "cpu_percent_avg=%.2f\ncpu_percent_max=%.1f\n", cpu_total / count, max_cpu
+    # Growth after warm-up: compare the first-quarter sample with the last,
+    # so cache fill-up at start-up is not mistaken for a leak.
+    quarter = int(count / 4); if (quarter < 1) quarter = 1
+    printf "rss_kb_after_warmup=%d\nrss_kb_growth_after_warmup=%d\n", rss_at[quarter], last_rss - rss_at[quarter]
     printf "interval_seconds=%d\nmax_timestamp_gap_seconds=%d\n", interval, max_gap
     if (max_gap > 2 * interval) {
       print "timestamp gap " max_gap "s exceeds two sampling intervals (" 2 * interval "s)" > "/dev/stderr"

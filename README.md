@@ -50,6 +50,26 @@ cd watchdog
 - 현재 사용자 소유 프로세스를 일시 정지, 재개, 종료 또는 강제 종료합니다.
 - 첫 실행 시 로그인 항목에 자동 등록되며, 감지 규칙에서 끌 수 있습니다.
 
+## 터미널 명령 (`watchdog-cli`)
+
+앱 번들에 함께 들어 있는 CLI로, 메뉴바 앱과 같은 감지·제어 코드를 터미널에서 실행합니다. 경로는 `Watchdog.app/Contents/MacOS/watchdog-cli`이며, `./scripts/install.sh --link-cli`로 `~/.local/bin/watchdog-cli`에 연결할 수 있습니다.
+
+```bash
+watchdog-cli list --scope agents          # TOKEN(pid:시작시각:uid)과 함께 목록
+watchdog-cli inspect <TOKEN|PID>          # 작업 디렉터리·워크트리 상태까지 상세 정보
+watchdog-cli watch --auto-suspend --json  # 앱과 같은 감지 엔진으로 지속 감시
+watchdog-cli suspend <TOKEN|PID>          # SIGSTOP (되돌릴 수 있음)
+watchdog-cli terminate <TOKEN>            # 차단되고 무엇을 할지만 출력 (exit 3)
+watchdog-cli terminate <TOKEN> --force    # 실제 SIGTERM 후 종료 확인
+watchdog-cli stopped --resume-all         # Watchdog이 멈춘 프로세스 재개
+watchdog-cli doctor                       # 샘플링 비용과 환경 진단
+```
+
+- `terminate`·`force-quit`은 PID만으로 실행할 수 없고 TOKEN과 `--force`가 모두 필요합니다.
+- `--force`로도 PID 1, Watchdog 자신, 다른 사용자, 시스템 경로, 신원 불일치·확인 불가 대상은 거부됩니다(exit 4).
+- 종료 코드: 0 성공 · 1 실패 · 2 사용법 오류 · 3 `--force` 필요 · 4 안전 계약상 거부.
+- 앱과 CLI는 같은 정지 기록을 공유하므로, CLI로 멈춘 프로세스도 메뉴의 "주의 필요"에 보입니다.
+
 ## 안전 계약
 
 - 시스템·다른 사용자·PID 1·Watchdog 자체와 신원을 확인할 수 없는 프로세스는 제어하지 않습니다.
@@ -88,25 +108,11 @@ xcodebuild -project Watchdog.xcodeproj -scheme Watchdog -configuration Debug tes
 xcodebuild -project Watchdog.xcodeproj -scheme Watchdog -configuration Release build
 ```
 
-### 검증용 CLI (`watchdog-cli`)
+### 검증 스크립트
 
-앱과 같은 `WatchdogCore`(샘플링·감지·권한·제어)를 터미널에서 구동하는 개발·검증 도구입니다. 아직 배포 자산에는 포함되지 않습니다.
-
-```bash
-xcodebuild -project Watchdog.xcodeproj -scheme WatchdogCLI -configuration Debug -derivedDataPath DerivedData/cli build
-cli=DerivedData/cli/Build/Products/Debug/watchdog-cli
-$cli list --scope agents          # TOKEN(pid:시작시각:uid)과 함께 목록
-$cli watch --auto-suspend --json   # 앱과 같은 감지 엔진으로 지속 감시
-$cli terminate <TOKEN>             # 차단되고 무엇을 할지만 출력 (exit 3)
-$cli terminate <TOKEN> --force     # 실제 SIGTERM 후 종료 확인
-$cli stopped --resume-all          # Watchdog이 멈춘 프로세스 재개
-$cli doctor                        # 샘플링 비용과 환경 진단
-```
-
-- `terminate`·`force-quit`은 PID만으로 실행할 수 없고 TOKEN과 `--force`가 모두 필요합니다.
-- `--force`로도 PID 1, Watchdog 자신, 다른 사용자, 시스템 경로, 신원 불일치·확인 불가 대상은 거부됩니다(exit 4).
-- `scripts/cli-e2e.sh`는 직접 띄운 일회용 프로세스만 대상으로 전체 경로를 검증하고, 별도 정지 기록 파일(`WATCHDOG_LEDGER_PATH`)을 씁니다.
+- `scripts/cli-e2e.sh`는 직접 띄운 일회용 프로세스만 대상으로 CLI 전체 경로를 검증하고, 별도 정지 기록 파일(`WATCHDOG_LEDGER_PATH`)을 씁니다.
 - `scripts/launch-smoke.sh <Watchdog.app>`은 출시 실행 경로의 단일 인스턴스 동작을 로그인 항목 등록 없이 확인합니다.
+- `scripts/soak-candidate.sh`와 `scripts/analyze-soak.sh`는 장시간 실행 시 메모리·CPU·FD 추세를 기록하고 요약합니다.
 
 `WatchdogPreview`는 합성 프로세스 상태로 메뉴 화면과 접근성을 검증하는 개발 전용 창입니다. `WatchdogUITests`는 실제 프로세스에 시그널을 보내지 않습니다.
 

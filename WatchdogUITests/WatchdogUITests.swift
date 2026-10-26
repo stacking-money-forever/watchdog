@@ -153,6 +153,34 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
     }
 
+    /// The CPU ranking of the two fixture rows swaps on every 2 s sample. While
+    /// the list is on screen the rows must not trade places, otherwise a click
+    /// aimed at one row can land on the other.
+    @MainActor
+    func testRowsHoldPositionWhileRankingChanges() {
+        let app = launch(arguments: ["--ui-test-reorder-fixture"])
+        defer { app.terminate() }
+        let scope = app.radioButtons["전체"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        scope.click()
+
+        let first = app.descendants(matching: .any)["process.71001.9071001.row"]
+        let second = app.descendants(matching: .any)["process.71002.9071002.row"]
+        XCTAssertTrue(first.waitForExistence(timeout: 6))
+        XCTAssertTrue(second.waitForExistence(timeout: 2))
+
+        let initialOrder = first.frame.minY < second.frame.minY
+        func firstRowIsBusy() -> Bool { first.staticTexts["90%"].exists }
+        let initiallyBusy = firstRowIsBusy()
+        var sawRefresh = false
+        for _ in 0..<14 {
+            Thread.sleep(forTimeInterval: 0.5)
+            XCTAssertEqual(first.frame.minY < second.frame.minY, initialOrder, "rows traded places while shown")
+            if firstRowIsBusy() != initiallyBusy { sawRefresh = true }
+        }
+        XCTAssertTrue(sawRefresh, "the fixture must actually refresh, or the test proves nothing")
+    }
+
     @MainActor
     private func openActionMenu(in app: XCUIApplication) {
         let actions = app.descendants(matching: .any)["\(actionableProcess).actions"]

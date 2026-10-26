@@ -72,6 +72,13 @@ jobs:
             -derivedDataPath DerivedData/release \
             build
 
+      - name: Release bundle ships a working watchdog-cli
+        run: |
+          app=DerivedData/release/Build/Products/Release/Watchdog.app
+          codesign --verify --deep --strict "$app"
+          "$app/Contents/MacOS/watchdog-cli" --version
+          "$app/Contents/MacOS/watchdog-cli" list --scope agents --json --interval 0.2 > /dev/null
+
       - name: Release launch smoke (single instance, isolated)
         run: ./scripts/launch-smoke.sh DerivedData/release/Build/Products/Release/Watchdog.app
 
