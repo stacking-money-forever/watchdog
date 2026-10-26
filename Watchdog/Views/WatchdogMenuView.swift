@@ -86,6 +86,24 @@ struct WatchdogMenuView: View {
         }
         // A pending confirmation must survive the popup closing (focus loss);
         // it is only cancelled explicitly or when its 30 s validity expires.
+        .onReceive(monitor.$processes) { _ in
+            dismissConfirmationIfInvalid()
+        }
+    }
+
+    /// A confirmation whose window expired or whose process is gone can only
+    /// fail; close it and say why instead of leaving the list disabled.
+    private func dismissConfirmationIfInvalid() {
+        guard let pending = pendingAction,
+              !monitor.isConfirmationValid(pending.confirmationRequest)
+        else { return }
+        pendingAction = nil
+        monitor.cancelDestructiveConfirmation(pending.confirmationRequest)
+        let stillListed = monitor.processes.contains { $0.identity == pending.process.identity }
+        let message = stillListed
+            ? ProcessControlError.confirmationExpired.localizedDescription
+            : ProcessControlError.processChanged.localizedDescription
+        showMenuFeedback(.init(isError: true, message: message))
     }
 
 
@@ -116,6 +134,7 @@ struct WatchdogMenuView: View {
                         pendingAction = nil
                         completeDestructiveAction(action)
                     }
+                    .accessibilityIdentifier("watchdog.destructive-confirmation.confirm")
                 }
             }
             .padding(20)
@@ -356,10 +375,11 @@ struct WatchdogMenuView: View {
             .accessibilityLabel("Watchdog 정보")
             .accessibilityIdentifier("watchdog.about")
 
-            Button("종료") {
+            Button("Watchdog 종료") {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("watchdog.quit")
         }
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -461,22 +481,11 @@ struct WatchdogMenuView: View {
     }
 
     private func outcomeText(_ outcome: ProcessActionOutcome) -> String {
-        switch outcome {
-        case .signalDelivered: return "신호 전달됨 · 실행 상태는 별도 확인 필요"
-        case .awaitingExit: return "신호 전달됨 · 종료 확인 중"
-        case .exited: return "종료 확인됨"
-        case .stillRunning: return "신호 후에도 실행 중"
-        case .identityChanged: return "PID가 다른 프로세스로 바뀜"
-        case .verificationFailed: return "종료 여부를 확인하지 못함"
-        case let .failed(message): return "작업 실패: \(message)"
-        }
+        outcome.localizedDescription
     }
 
     private func outcomeIsError(_ outcome: ProcessActionOutcome) -> Bool {
-        switch outcome {
-        case .stillRunning, .identityChanged, .verificationFailed, .failed: return true
-        case .signalDelivered, .awaitingExit, .exited: return false
-        }
+        outcome.isError
     }
 
     private func observationText(_ lastUpdated: Date) -> String {

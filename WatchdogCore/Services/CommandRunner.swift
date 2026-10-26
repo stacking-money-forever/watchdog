@@ -8,6 +8,15 @@ enum CommandRunnerError: LocalizedError, Sendable {
     case cancelled(executable: String)
     case resourceLimit(executable: String)
 
+    /// The helper never produced an answer, so the failure says nothing about
+    /// the thing being probed.
+    var isTransient: Bool {
+        switch self {
+        case .timedOut, .cancelled, .resourceLimit: return true
+        case .launchFailed, .failed: return false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case let .launchFailed(executable, message):
@@ -124,11 +133,17 @@ enum CommandRunner {
         let errorData = error.finish(within: Self.drainGrace)
         state.clear(process)
 
+        // An unfinished stdout drain means the output is incomplete (often
+        // empty). Treating it as a successful empty answer would publish a
+        // wrong result, so report it as a timeout instead.
+        guard let outputData else {
+            throw CommandRunnerError.timedOut(executable: executable)
+        }
         return try decode(
             executable: executable,
             status: process.terminationStatus,
             output: outputData,
-            error: errorData
+            error: errorData ?? Data()
         )
     }
 
@@ -311,7 +326,7 @@ private final class ForceKillTarget: @unchecked Sendable {
 
 private final class PipeDrain: @unchecked Sendable {
     private let pipe: Pipe
-    private let queue = DispatchQueue(label: "watchdog.command-runner.pipe")
+    private let queue = DispatchQueue(label: "watchdog.command-runner.pipe", qos: .userInitiated)
     private let group = DispatchGroup()
     private let lock = NSLock()
     private var data = Data()
@@ -340,11 +355,12 @@ private final class PipeDrain: @unchecked Sendable {
     /// After the direct child exits, orphaned descendants can still hold the
     /// pipe write end open; bound the wait so they cannot hold a helper
     /// admission slot indefinitely.
-    func finish(within grace: TimeInterval) -> Data {
-        _ = group.wait(timeout: .now() + grace)
-        let output = lock.withLock { () -> Data in
+    func finish(within grace: TimeInterval) -> Data? {
+        let completed = group.wait(timeout: .now() + grace) == .success
+        let output = lock.withLock { () -> Data? in
+            let drained = consumed
             consumed = true
-            return data
+            return completed && drained ? data : nil
         }
         try? pipe.fileHandleForReading.close()
         return output

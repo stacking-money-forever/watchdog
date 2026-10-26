@@ -65,6 +65,32 @@ final class LaunchAtLoginControllerTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "launchAtLogin.userOptedOut"))
     }
 
+    func testRemovalInSystemSettingsIsNotUndoneOnNextLaunch() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let firstService = FakeLaunchAtLoginService(status: .notRegistered)
+        _ = LaunchAtLoginController(defaults: defaults, service: firstService)
+        XCTAssertEqual(firstService.registerCallCount, 1)
+
+        // The user removed Watchdog under System Settings → Login Items.
+        let secondService = FakeLaunchAtLoginService(status: .notRegistered)
+        let controller = LaunchAtLoginController(defaults: defaults, service: secondService)
+
+        XCTAssertEqual(secondService.registerCallCount, 0)
+        XCTAssertFalse(controller.isEnabled)
+    }
+
+    func testAlreadyEnabledInstallIsRememberedAsRegistered() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        _ = LaunchAtLoginController(defaults: defaults, service: FakeLaunchAtLoginService(status: .enabled))
+
+        let removed = FakeLaunchAtLoginService(status: .notRegistered)
+        _ = LaunchAtLoginController(defaults: defaults, service: removed)
+
+        XCTAssertEqual(removed.registerCallCount, 0)
+    }
+
     private func makeDefaults() -> (UserDefaults, String) {
         let suiteName = "dev.justn.watchdog.launch-at-login-tests.\(UUID().uuidString)"
         return (UserDefaults(suiteName: suiteName)!, suiteName)

@@ -29,16 +29,6 @@ struct DestructiveActionConfirmationRequest: Sendable {
     fileprivate let requestedAt: ContinuousClock.Instant
 }
 
-enum ProcessActionOutcome: Equatable, Sendable {
-    case signalDelivered
-    case awaitingExit
-    case exited
-    case stillRunning
-    case identityChanged
-    case verificationFailed
-    case failed(String)
-}
-
 private struct NotificationCooldownKey: Hashable {
     let identity: ProcessIdentity
     let reason: AlertReason
@@ -96,18 +86,19 @@ final class ProcessMonitor: ObservableObject {
         }
     }
 
+    /// Processes Watchdog itself stopped and that are still stopped.
+    @Published private(set) var watchdogSuspended: [SuspensionRecord] = []
+
     private let defaults: UserDefaults
-    private let sampler = ProcessSampler()
+    private let sampler: any ProcessSampling
+    private let ledger: SuspensionLedger
     private let workingDirectoryResolver: WorkingDirectoryResolver
     private let worktreeResolver: WorktreeStateResolver
     private let authorization: ProcessActionAuthorizationActor
     private let controller: ProcessController
     private let notificationRequestSender: (UNNotificationRequest) -> Void
     private let clock = ContinuousClock()
-    private var tracker = HotProcessTracker()
-    private var memoryTracker = MemoryProcessTracker()
-    private var ignoredProcesses: Set<ProcessIdentity> = []
-    private var ignoredAlertStates: [ProcessIdentity: (hot: Bool, highMemory: Bool)] = [:]
+    private var engine = MonitorEngine()
     private var refreshTask: Task<Void, Never>?
     private var observation: ObservationToken?
     private var generation: UInt64 = 0
@@ -116,11 +107,12 @@ final class ProcessMonitor: ObservableObject {
     private var pendingMemoryNotifications: [ProcessSnapshot] = []
     private var actionOutcomeRecordedAt: [ProcessIdentity: ContinuousClock.Instant] = [:]
     private var pendingConfirmations: [UUID: ContinuousClock.Instant] = [:]
-    private var ignorePruneCursor = 0
     private var terminationPollTasks: [ProcessIdentity: (id: UUID, task: Task<Void, Never>)] = [:]
 
     init(
         defaults: UserDefaults = .standard,
+        sampler: any ProcessSampling = ProcessSampler(),
+        ledger: SuspensionLedger = .inMemory(),
         authorization: ProcessActionAuthorizationActor = ProcessActionAuthorizationActor(),
         controller: ProcessController = ProcessController(),
         workingDirectoryResolver: WorkingDirectoryResolver = WorkingDirectoryResolver(),
@@ -130,16 +122,19 @@ final class ProcessMonitor: ObservableObject {
         }
     ) {
         self.defaults = defaults
+        self.sampler = sampler
+        self.ledger = ledger
         self.authorization = authorization
         self.controller = controller
         self.workingDirectoryResolver = workingDirectoryResolver
         self.worktreeResolver = worktreeResolver
         self.notificationRequestSender = notificationRequestSender
-        threshold = Self.normalizedCPU(defaults.object(forKey: Keys.threshold) as? Double ?? 100)
-        sustainedDuration = Self.normalizedDuration(defaults.object(forKey: Keys.sustainedDuration) as? Double ?? 20)
-        memoryThresholdGB = Self.normalizedMemory(defaults.object(forKey: Keys.memoryThresholdGB) as? Double ?? 2)
+        let settings = MonitorSettings(defaults: defaults)
+        threshold = settings.cpuThreshold
+        sustainedDuration = settings.sustainedDuration
+        memoryThresholdGB = settings.memoryThresholdGB
         notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
-        autoSuspendEnabled = defaults.object(forKey: Keys.autoSuspendEnabled) as? Bool ?? false
+        autoSuspendEnabled = settings.autoSuspendEnabled
         defaults.set(threshold, forKey: Keys.threshold)
         defaults.set(sustainedDuration, forKey: Keys.sustainedDuration)
         defaults.set(memoryThresholdGB, forKey: Keys.memoryThresholdGB)
@@ -152,9 +147,19 @@ final class ProcessMonitor: ObservableObject {
     }
 
 
+    var settings: MonitorSettings {
+        MonitorSettings(
+            cpuThreshold: threshold,
+            sustainedDuration: sustainedDuration,
+            memoryThresholdGB: memoryThresholdGB,
+            autoSuspendEnabled: autoSuspendEnabled
+        )
+    }
+
     func start() {
         guard refreshTask == nil else { return }
         requestNotificationPermission()
+        reconcileLedger()
 
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -171,91 +176,74 @@ final class ProcessMonitor: ObservableObject {
 
         do {
             let sample = try await sampler.sample()
-            let increment = generation.addingReportingOverflow(1)
-            guard !increment.overflow else {
-                throw ProcessControlError.staleObservation
-            }
-            let nextGeneration = increment.partialValue
-            generation = nextGeneration
-            let token = ObservationToken(generation: nextGeneration, instant: clock.now)
-            observation = token
-            let snapshots = OrphanClassifier.classify(sample.processes)
-
-            let liveIdentities = Set(snapshots.map(\.identity))
-            pruneNotificationCooldowns(liveIdentities: liveIdentities, at: token.instant)
-            pruneActionOutcomes(at: token.instant)
-            pruneIgnoredProcesses(liveIdentities: liveIdentities)
-
-            let previousHotProcesses = hotProcesses
-            let previousHighMemoryProcesses = highMemoryProcesses
-            let nextHotProcesses = tracker.update(
-                snapshots: snapshots,
-                threshold: threshold,
-                sustainedFor: sustainedDuration,
-                ignoredProcesses: ignoredProcesses,
-                at: token.instant
-            )
-            let nextHighMemoryProcesses = memoryTracker.update(
-                snapshots: snapshots,
-                thresholdBytes: UInt64(memoryThresholdGB * 1_024 * 1_024 * 1_024),
-                sustainedFor: sustainedDuration,
-                ignoredProcesses: ignoredProcesses,
-                at: token.instant
-            )
-
-            processes = snapshots.sorted {
-                if $0.suspectedOrphan != $1.suspectedOrphan {
-                    return $0.suspectedOrphan
-                }
-                return $0.cpuPercent > $1.cpuPercent
-            }
-            hotProcesses = nextHotProcesses
-            highMemoryProcesses = nextHighMemoryProcesses
+            apply(sample)
             await workingDirectoryResolver.resolve(
-                snapshots,
-                generation: token.generation
+                processes,
+                generation: generation
             ) { [weak self] result in
                 await self?.mergeWorkingDirectory(result)
             }
-            if autoSuspendEnabled {
-                await autoSuspendNewlyFlagged(
-                    hot: nextHotProcesses.subtracting(previousHotProcesses),
-                    highMemory: nextHighMemoryProcesses.subtracting(previousHighMemoryProcesses),
-                    snapshots: snapshots
-                )
-            }
-            await resolveWorktreeStates(snapshots: snapshots)
-            if let systemCPUPercent = sample.systemCPUPercent {
-                self.systemCPUPercent = systemCPUPercent
-            }
-            systemMemory = sample.systemMemory
-            lastUpdated = Date()
-            samplingError = nil
-
-            let newHotProcesses = nextHotProcesses.subtracting(previousHotProcesses)
-            let newHighMemoryProcesses = nextHighMemoryProcesses.subtracting(previousHighMemoryProcesses)
-            if notificationsEnabled {
-                prunePendingNotifications(
-                    hotIdentities: nextHotProcesses,
-                    highMemoryIdentities: nextHighMemoryProcesses
-                )
-                enqueueCPUNotifications(for: snapshots.filter { newHotProcesses.contains($0.identity) })
-                enqueueMemoryNotifications(for: snapshots.filter { newHighMemoryProcesses.contains($0.identity) })
-                sendPendingNotifications(at: token.instant)
-            }
+            await autoSuspend(lastUpdate)
+            await resolveWorktreeStates(snapshots: processes)
         } catch {
-            samplingError = error.localizedDescription
-            observation = nil
-            tracker.reset()
-            memoryTracker.reset()
-            hotProcesses.removeAll()
-            highMemoryProcesses.removeAll()
-            pendingCPUNotifications.removeAll(keepingCapacity: true)
-            pendingMemoryNotifications.removeAll(keepingCapacity: true)
+            samplingFailed(error)
             await authorization.invalidateAll()
-            pendingConfirmations.removeAll(keepingCapacity: true)
             await workingDirectoryResolver.cancel(generation: generation)
         }
+    }
+
+    private var lastUpdate: MonitorUpdate?
+
+    /// Publishes one successful sample in a single main-actor turn so the UI
+    /// never renders a half-applied observation.
+    private func apply(_ sample: ProcessSample) {
+        let increment = generation.addingReportingOverflow(1)
+        guard !increment.overflow else {
+            samplingFailed(ProcessControlError.staleObservation)
+            return
+        }
+        generation = increment.partialValue
+        let token = ObservationToken(generation: generation, instant: clock.now)
+        observation = token
+
+        let update = engine.ingest(sample.processes, settings: settings, at: token.instant)
+        lastUpdate = update
+        let liveIdentities = Set(update.processes.map(\.identity))
+        pruneNotificationCooldowns(liveIdentities: liveIdentities, at: token.instant)
+        pruneActionOutcomes(at: token.instant)
+
+        processes = update.processes
+        hotProcesses = update.hot
+        highMemoryProcesses = update.highMemory
+        if let systemCPUPercent = sample.systemCPUPercent {
+            self.systemCPUPercent = systemCPUPercent
+        }
+        systemMemory = sample.systemMemory
+        lastUpdated = Date()
+        samplingError = nil
+        refreshWatchdogSuspended(liveProcesses: update.processes)
+
+        if notificationsEnabled, notificationAuthorization != .denied {
+            prunePendingNotifications(
+                hotIdentities: update.hot,
+                highMemoryIdentities: update.highMemory
+            )
+            enqueueCPUNotifications(for: update.processes.filter { update.newlyHot.contains($0.identity) })
+            enqueueMemoryNotifications(for: update.processes.filter { update.newlyHighMemory.contains($0.identity) })
+            sendPendingNotifications(at: token.instant)
+        }
+    }
+
+    private func samplingFailed(_ error: Error) {
+        samplingError = error.localizedDescription
+        observation = nil
+        lastUpdate = nil
+        engine.samplingFailed()
+        hotProcesses.removeAll()
+        highMemoryProcesses.removeAll()
+        pendingCPUNotifications.removeAll(keepingCapacity: true)
+        pendingMemoryNotifications.removeAll(keepingCapacity: true)
+        pendingConfirmations.removeAll(keepingCapacity: true)
     }
 
     func visibleProcesses(scope: ProcessScope, search: String) -> [ProcessSnapshot] {
@@ -263,10 +251,14 @@ final class ProcessMonitor: ObservableObject {
 
         switch scope {
         case .attention:
+            // A process Watchdog stopped stays here with its resume control,
+            // even though its CPU dropped to zero the moment it stopped.
+            let stopped = Set(watchdogSuspended.map(\.identity))
             scoped = processes.filter {
-                !ignoredProcesses.contains($0.identity)
+                !engine.ignored.contains($0.identity)
                     && (hotProcesses.contains($0.identity)
-                    || highMemoryProcesses.contains($0.identity))
+                    || highMemoryProcesses.contains($0.identity)
+                    || stopped.contains($0.identity))
             }
         case .agents:
             scoped = processes.filter { $0.kind == .agent }
@@ -299,7 +291,11 @@ final class ProcessMonitor: ObservableObject {
     }
 
     func isIgnored(_ process: ProcessSnapshot) -> Bool {
-        ignoredProcesses.contains(process.identity)
+        engine.ignored.contains(process.identity)
+    }
+
+    func isSuspendedByWatchdog(_ process: ProcessSnapshot) -> Bool {
+        watchdogSuspended.contains { $0.identity == process.identity }
     }
 
     func alertReasons(for process: ProcessSnapshot) -> [AlertReason] {
@@ -309,7 +305,7 @@ final class ProcessMonitor: ObservableObject {
             reasons.append(.sustainedCPU(percent: threshold))
         }
         if isHighMemory(process) {
-            reasons.append(.sustainedMemory(bytes: UInt64(memoryThresholdGB * 1_024 * 1_024 * 1_024)))
+            reasons.append(.sustainedMemory(bytes: settings.memoryThresholdBytes))
         }
         if let orphanReason = process.orphanReason {
             reasons.append(.orphan(orphanReason))
@@ -341,20 +337,26 @@ final class ProcessMonitor: ObservableObject {
         performImmediate(.resume, process: process, success: "재개: \(process.displayName)")
     }
 
+    /// Whether a confirmation can still complete. The view dismisses a
+    /// confirmation that has expired or whose process is gone instead of
+    /// leaving a dialog that can only fail.
+    func isConfirmationValid(_ request: DestructiveActionConfirmationRequest) -> Bool {
+        pendingConfirmations[request.id] == request.requestedAt
+            && clock.now < request.requestedAt.advanced(by: Self.confirmationValidity)
+            && processes.contains(where: { $0.identity == request.identity })
+    }
+
+    static let confirmationValidity: Duration = .seconds(30)
+
     func destructiveActionRequest(
         _ action: ProcessControlAction,
         for process: ProcessSnapshot
     ) throws -> DestructiveActionConfirmationRequest {
-        guard action.isDestructive,
-              observation != nil,
-              actionability(of: process).canAct,
-              processes.contains(where: { $0.identity == process.identity })
-        else {
-            throw ProcessControlError.staleObservation
-        }
+        guard action.isDestructive else { throw ProcessControlError.authorizationInvalid }
+        try requireActionable(process)
         let requestedAt = clock.now
         pendingConfirmations = pendingConfirmations.filter {
-            requestedAt < $0.value.advanced(by: .seconds(30))
+            requestedAt < $0.value.advanced(by: Self.confirmationValidity)
         }
         guard pendingConfirmations.count < 256 else {
             throw ProcessControlError.authorizationCapacityReached
@@ -373,22 +375,29 @@ final class ProcessMonitor: ObservableObject {
         _ request: DestructiveActionConfirmationRequest
     ) async throws {
         guard pendingConfirmations.removeValue(forKey: request.id) == request.requestedAt,
-              request.action.isDestructive,
-              let observation,
-              clock.now < request.requestedAt.advanced(by: .seconds(30)),
-              processes.contains(where: { $0.identity == request.identity }),
-              let process = processes.first(where: { $0.identity == request.identity }),
-              actionability(of: process).canAct
+              request.action.isDestructive
         else {
-            throw ProcessControlError.staleObservation
+            throw ProcessControlError.confirmationNotPending
         }
+        guard clock.now < request.requestedAt.advanced(by: Self.confirmationValidity) else {
+            throw ProcessControlError.confirmationExpired
+        }
+        guard let process = processes.first(where: { $0.identity == request.identity }) else {
+            throw ProcessControlError.processChanged
+        }
+        let observation = try requireActionable(process)
         let nonce = try await authorization.mint(
             action: request.action,
             identity: request.identity,
             observation: observation,
             at: clock.now
         )
-        try await consumeAction(nonce, action: request.action, process: process)
+        try await consumeAction(
+            nonce,
+            action: request.action,
+            process: process,
+            mintedGeneration: observation.generation
+        )
     }
 
     func cancelDestructiveConfirmation(
@@ -399,43 +408,28 @@ final class ProcessMonitor: ObservableObject {
     }
 
     func ignoreUntilExit(_ process: ProcessSnapshot) {
-        guard ignoredProcesses.contains(process.identity) || ignoredProcesses.count < 512 else {
+        switch engine.ignore(process.identity) {
+        case .capacityReached:
             showFeedback(.init(kind: .error, message: "무시 목록이 가득 찼습니다"))
-            return
+        case .ignored:
+            hotProcesses = engine.hot
+            highMemoryProcesses = engine.highMemory
+            showFeedback(.init(kind: .success, message: "이 프로세스는 종료할 때까지 무시합니다"))
         }
-        ignoredAlertStates[process.identity] = (
-            hot: hotProcesses.contains(process.identity),
-            highMemory: highMemoryProcesses.contains(process.identity)
-        )
-        ignoredProcesses.insert(process.identity)
-        hotProcesses.remove(process.identity)
-        highMemoryProcesses.remove(process.identity)
-        showFeedback(.init(kind: .success, message: "이 프로세스는 종료할 때까지 무시합니다"))
     }
 
-
     /// Auto-suspend is reversible by design: SIGSTOP halts runaway CPU and
-    /// token consumption without ever killing work. Only newly flagged
-    /// processes are targeted, never already-suspended ones, and every signal
-    /// goes through the same authorization pipeline as manual actions.
-    private func autoSuspendNewlyFlagged(
-        hot: Set<ProcessIdentity>,
-        highMemory: Set<ProcessIdentity>,
-        snapshots: [ProcessSnapshot]
-    ) async {
-        let byIdentity = Dictionary(
-            snapshots.map { ($0.identity, $0) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let candidates = hot.union(highMemory)
-            .compactMap { byIdentity[$0] }
-            .filter { !$0.isProtected && !$0.isSuspended }
-        for snapshot in candidates {
+    /// token consumption without ever killing work. Only coding agents newly
+    /// flagged for sustained CPU are targeted (never memory-only, never apps),
+    /// a process the user resumed by hand is left alone, and every signal goes
+    /// through the same authorization pipeline as manual actions.
+    private func autoSuspend(_ update: MonitorUpdate?) async {
+        guard autoSuspendEnabled, let update else { return }
+        for snapshot in update.autoSuspendCandidates {
             do {
-                let nonce = try await requestImmediateAction(.suspend, for: snapshot)
-                try await consumeAction(nonce, action: .suspend, process: snapshot)
+                try await performAction(.suspend, process: snapshot, source: .auto)
                 showFeedback(
-                    .init(kind: .success, message: "자동 일시 정지: \(snapshot.displayName) (CPU·메모리 임계값 초과)")
+                    .init(kind: .success, message: "자동 일시 정지: \(snapshot.displayName) (CPU 임계값 지속 초과)")
                 )
             } catch {
                 recordActionOutcome(.failed(error.localizedDescription), for: snapshot.identity)
@@ -444,12 +438,63 @@ final class ProcessMonitor: ObservableObject {
     }
 
     func undoIgnore(_ process: ProcessSnapshot) {
-        guard ignoredProcesses.remove(process.identity) != nil else { return }
-        if let state = ignoredAlertStates.removeValue(forKey: process.identity) {
-            if state.hot { hotProcesses.insert(process.identity) }
-            if state.highMemory { highMemoryProcesses.insert(process.identity) }
-        }
+        guard engine.undoIgnore(process.identity) else { return }
+        hotProcesses = engine.hot
+        highMemoryProcesses = engine.highMemory
         showFeedback(.init(kind: .success, message: "이 프로세스를 다시 감시합니다"))
+    }
+
+    /// Resumes every process Watchdog stopped that is still stopped. Used when
+    /// the app quits so nothing is left frozen behind it.
+    func resumeAllWatchdogSuspended() async -> (resumed: Int, failed: Int) {
+        // Take a fresh observation so every resume goes through the normal
+        // single-use authorization bound to a real sample generation.
+        await refresh()
+        reconcileLedger()
+        var resumed = 0
+        var failed = 0
+        for record in watchdogSuspended {
+            guard let process = processes.first(where: { $0.identity == record.identity }) else {
+                failed += 1
+                continue
+            }
+            do {
+                try await performAction(.resume, process: process, source: record.source)
+                resumed += 1
+            } catch {
+                failed += 1
+            }
+        }
+        reconcileLedger()
+        return (resumed, failed)
+    }
+
+    func reconcileLedger() {
+        let controller = controller
+        watchdogSuspended = (try? ledger.reconcile(lookup: { controller.lookup(pid: $0) })) ?? ledger.all()
+    }
+
+    private func refreshWatchdogSuspended(liveProcesses: [ProcessSnapshot]) {
+        // Cheap per-sample reconciliation against the sample itself; the full
+        // live lookup runs on start and after actions.
+        let records = ledger.all()
+        guard !records.isEmpty else {
+            if !watchdogSuspended.isEmpty { watchdogSuspended = [] }
+            return
+        }
+        let live = Dictionary(
+            liveProcesses.map { ($0.identity, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var retained: [SuspensionRecord] = []
+        for record in records {
+            if let process = live[record.identity], process.isSuspended {
+                retained.append(record)
+            } else {
+                try? ledger.remove(record.identity)
+            }
+        }
+        if retained != watchdogSuspended { watchdogSuspended = retained }
     }
 
     /// Ask the worktree resolver about each agent's project directory. Only
@@ -479,6 +524,7 @@ final class ProcessMonitor: ObservableObject {
         for index in processes.indices
         where processes[index].workingDirectory == path {
             processes[index].worktreeState = state
+            engine.recordWorktreeState(state, for: processes[index].identity)
         }
     }
 #if DEBUG
@@ -529,8 +575,9 @@ final class ProcessMonitor: ObservableObject {
         updatedAt: Date
     ) {
         self.processes = processes
-        self.hotProcesses = hotProcesses
-        self.highMemoryProcesses = highMemoryProcesses
+        engine.loadPreview(hot: hotProcesses, highMemory: highMemoryProcesses)
+        self.hotProcesses = engine.hot
+        self.highMemoryProcesses = engine.highMemory
         systemCPUPercent = 37
         systemMemory = SystemMemorySnapshot(
             totalBytes: 48 * 1_024 * 1_024 * 1_024,
@@ -560,12 +607,28 @@ final class ProcessMonitor: ObservableObject {
         snapshots: [ProcessSnapshot]
     ) async {
         guard autoSuspendEnabled else { return }
-        await autoSuspendNewlyFlagged(
-            hot: hot,
-            highMemory: highMemory,
-            snapshots: snapshots
+        let candidates = snapshots.filter {
+            hot.contains($0.identity)
+                && MonitorEngine.isAutoSuspendEligible($0)
+                && !engine.userResumed.contains($0.identity)
+        }
+        await autoSuspend(
+            MonitorUpdate(
+                processes: snapshots,
+                hot: hot,
+                highMemory: highMemory,
+                newlyHot: hot,
+                newlyHighMemory: highMemory,
+                autoSuspendCandidates: candidates
+            )
         )
     }
+
+    func applySamplePreview(_ sample: ProcessSample) {
+        apply(sample)
+    }
+
+    var ledgerPreview: SuspensionLedger { ledger }
 
     func pruneActionOutcomesPreview(at instant: ContinuousClock.Instant) {
         pruneActionOutcomes(at: instant)
@@ -606,62 +669,104 @@ final class ProcessMonitor: ObservableObject {
     }
 #endif
 
-    private func requestImmediateAction(
-        _ action: ProcessControlAction,
-        for process: ProcessSnapshot
-    ) async throws -> ProcessActionNonce {
-        guard !action.isDestructive else { throw ProcessControlError.authorizationInvalid }
+    /// Throws the specific reason a process cannot be acted on right now.
+    @discardableResult
+    private func requireActionable(_ process: ProcessSnapshot) throws -> ObservationToken {
+        guard processes.contains(where: { $0.identity == process.identity }) else {
+            throw ProcessControlError.processChanged
+        }
         let state = actionability(of: process)
-        guard state.canAct,
-              let observation = state.observation,
-              processes.contains(where: { $0.identity == process.identity })
-        else {
+        if state.isIgnored { throw ProcessControlError.processIgnored }
+        if state.isProtected { throw ProcessControlError.protectedProcess }
+        guard state.canAct, let observation = state.observation else {
             throw ProcessControlError.staleObservation
         }
-        return try await authorization.mint(
+        return observation
+    }
+
+    /// Mint, consume, and execute one non-destructive action, then record it.
+    private func performAction(
+        _ action: ProcessControlAction,
+        process: ProcessSnapshot,
+        source: SuspensionRecord.Source
+    ) async throws {
+        guard !action.isDestructive else { throw ProcessControlError.authorizationInvalid }
+        let observation = try requireActionable(process)
+        let nonce = try await authorization.mint(
             action: action,
             identity: process.identity,
             observation: observation,
             at: clock.now
+        )
+        try await consumeAction(
+            nonce,
+            action: action,
+            process: process,
+            mintedGeneration: observation.generation,
+            source: source
         )
     }
 
     func consumeAction(
         _ nonce: ProcessActionNonce,
         action: ProcessControlAction,
-        process: ProcessSnapshot
+        process: ProcessSnapshot,
+        mintedGeneration: UInt64,
+        source: SuspensionRecord.Source = .manual
     ) async throws {
-        guard let observation,
-              actionability(of: process).canAct,
-              processes.contains(where: { $0.identity == process.identity })
-        else {
-            throw ProcessControlError.staleObservation
+        let observation = try requireActionable(process)
+        // A sample landed between minting and consuming. Say so instead of
+        // reporting a consumed approval.
+        guard observation.generation == mintedGeneration else {
+            throw ProcessControlError.observationRefreshed
         }
-        let instant = clock.now
         let authorized = try await authorization.consume(
             nonce,
             action: action,
             identity: process.identity,
             currentGeneration: observation.generation,
-            at: instant
+            at: clock.now
         )
         guard let currentObservation = self.observation,
-              currentObservation.generation == authorized.observationGeneration,
-              actionability(of: process).canAct,
-              processes.contains(where: { $0.identity == process.identity })
+              currentObservation.generation == authorized.observationGeneration
         else {
-            throw ProcessControlError.staleObservation
+            throw ProcessControlError.observationRefreshed
         }
-        try controller.execute(
-            authorized,
-            currentGeneration: currentObservation.generation
-        )
-        recordActionOutcome(.signalDelivered, for: process.identity)
+        try requireActionable(process)
+        do {
+            try controller.execute(
+                authorized,
+                currentGeneration: currentObservation.generation
+            )
+        } catch let ProcessControlError.partiallyApplied(delivered, failure) where delivered.contains(SIGCONT) {
+            // A stopped process was continued but not terminated: it is
+            // running again and no longer Watchdog-suspended.
+            try? ledger.remove(process.identity)
+            reconcileLedger()
+            throw ProcessControlError.partiallyApplied(delivered: delivered, failure: failure)
+        }
 
-        if action.isDestructive {
+        switch action {
+        case .suspend:
+            try? ledger.record(
+                SuspensionRecord(
+                    identity: process.identity,
+                    executablePath: process.executablePath,
+                    suspendedAt: Date(),
+                    source: source
+                )
+            )
+            recordActionOutcome(.suspended, for: process.identity)
+        case .resume:
+            try? ledger.remove(process.identity)
+            engine.recordUserResume(process.identity)
+            recordActionOutcome(.resumed, for: process.identity)
+        case .terminate, .forceQuit:
+            try? ledger.remove(process.identity)
             recordActionOutcome(.awaitingExit, for: process.identity)
             pollTerminationOutcome(for: process.identity)
         }
+        watchdogSuspended = ledger.all()
     }
 
     private func performImmediate(
@@ -671,8 +776,16 @@ final class ProcessMonitor: ObservableObject {
     ) {
         Task {
             do {
-                let nonce = try await requestImmediateAction(action, for: process)
-                try await consumeAction(nonce, action: action, process: process)
+                do {
+                    try await performAction(action, process: process, source: .manual)
+                } catch ProcessControlError.observationRefreshed {
+                    // Non-destructive and reversible: one retry against the
+                    // fresh observation (a new single-use authorization).
+                    guard let fresh = processes.first(where: { $0.identity == process.identity }) else {
+                        throw ProcessControlError.processChanged
+                    }
+                    try await performAction(action, process: fresh, source: .manual)
+                }
                 showFeedback(.init(kind: .success, message: message))
             } catch {
                 recordActionOutcome(.failed(error.localizedDescription), for: process.identity)
@@ -688,43 +801,11 @@ final class ProcessMonitor: ObservableObject {
             return
         }
         processes[index].workingDirectory = result.workingDirectory
+        engine.recordWorkingDirectory(result.workingDirectory, for: result.identity)
         let snapshot = processes[index]
         Task { [weak self] in
             await self?.resolveWorktreeStates(snapshots: [snapshot])
         }
-    }
-
-    private func pruneIgnoredProcesses(liveIdentities: Set<ProcessIdentity>) {
-        let candidates = ignoredProcesses
-            .filter { !liveIdentities.contains($0) }
-            .sorted {
-                if $0.pid != $1.pid { return $0.pid < $1.pid }
-                if $0.startTimeMicroseconds != $1.startTimeMicroseconds {
-                    return $0.startTimeMicroseconds < $1.startTimeMicroseconds
-                }
-                return $0.userID < $1.userID
-            }
-        guard !candidates.isEmpty else {
-            ignorePruneCursor = 0
-            return
-        }
-
-        let count = min(16, candidates.count)
-        let start = ignorePruneCursor % candidates.count
-        for offset in 0..<count {
-            let identity = candidates[(start + offset) % candidates.count]
-            switch controller.lookup(pid: identity.pid) {
-            case .absent:
-                ignoredProcesses.remove(identity)
-                ignoredAlertStates[identity] = nil
-            case let .found(facts) where facts.identity != identity:
-                ignoredProcesses.remove(identity)
-                ignoredAlertStates[identity] = nil
-            case .found, .failed:
-                break
-            }
-        }
-        ignorePruneCursor = (start + count) % candidates.count
     }
 
     private func pollTerminationOutcome(for identity: ProcessIdentity) {
@@ -744,12 +825,15 @@ final class ProcessMonitor: ObservableObject {
                     controller.lookup(pid: identity.pid)
                 }.value
                 guard !Task.isCancelled else { return }
-                if let outcome = Self.terminationOutcome(for: lookup, identity: identity) {
+                let outcome = Self.terminationOutcome(for: lookup, identity: identity)
+                // One failed lookup mid-exit is not a verdict; keep polling and
+                // only report the failure if the budget runs out on it.
+                if let outcome, outcome != .verificationFailed {
                     self.recordActionOutcome(outcome, for: identity)
                     return
                 }
                 if attempt == 19 {
-                    self.recordActionOutcome(.stillRunning, for: identity)
+                    self.recordActionOutcome(outcome ?? .stillRunning, for: identity)
                 }
             }
         }
@@ -760,12 +844,7 @@ final class ProcessMonitor: ObservableObject {
         for lookup: LiveProcessLookup,
         identity: ProcessIdentity
     ) -> ProcessActionOutcome? {
-        switch lookup {
-        case .absent: return .exited
-        case let .found(facts) where facts.identity != identity: return .identityChanged
-        case .failed: return .verificationFailed
-        case .found: return nil
-        }
+        TerminationVerdict.outcome(for: lookup, identity: identity)
     }
 
     private func finishTerminationPoll(identity: ProcessIdentity, id: UUID) {
@@ -856,9 +935,7 @@ final class ProcessMonitor: ObservableObject {
         at instant: ContinuousClock.Instant
     ) {
         for snapshot in snapshots {
-            let reason = AlertReason.sustainedMemory(
-                bytes: UInt64(memoryThresholdGB * 1_024 * 1_024 * 1_024)
-            )
+            let reason = AlertReason.sustainedMemory(bytes: settings.memoryThresholdBytes)
             guard reserveNotification(identity: snapshot.identity, reason: reason, at: instant) else {
                 continue
             }
@@ -944,26 +1021,17 @@ final class ProcessMonitor: ObservableObject {
         }
     }
 
-    private enum Keys {
-        static let threshold = "threshold"
-        static let sustainedDuration = "sustainedDuration"
-        static let memoryThresholdGB = "memoryThresholdGB"
-        static let notificationsEnabled = "notificationsEnabled"
-        static let autoSuspendEnabled = "autoSuspendEnabled"
-    }
+    private typealias Keys = MonitorSettings.Keys
 
     private static func normalizedCPU(_ value: Double) -> Double {
-        guard value.isFinite else { return 100 }
-        return min(max(value, 1), 1_000)
+        MonitorSettings.normalizedCPU(value)
     }
 
     private static func normalizedDuration(_ value: Double) -> Double {
-        guard value.isFinite else { return 20 }
-        return min(max(value, 2), 300)
+        MonitorSettings.normalizedDuration(value)
     }
 
     private static func normalizedMemory(_ value: Double) -> Double {
-        guard value.isFinite else { return 2 }
-        return min(max(value, 0.1), 1_024)
+        MonitorSettings.normalizedMemory(value)
     }
 }

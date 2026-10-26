@@ -1,0 +1,269 @@
+import Foundation
+
+/// Detection settings shared by the menu bar app and the CLI. Values are
+/// normalized on every read so corrupted defaults can never produce an
+/// infinite, negative, or absurd threshold.
+struct MonitorSettings: Equatable, Sendable {
+    static let defaultsSuiteName = "dev.justn.watchdog"
+
+    enum Keys {
+        static let threshold = "threshold"
+        static let sustainedDuration = "sustainedDuration"
+        static let memoryThresholdGB = "memoryThresholdGB"
+        static let notificationsEnabled = "notificationsEnabled"
+        static let autoSuspendEnabled = "autoSuspendEnabled"
+    }
+
+    /// Below-threshold samples keep existing CPU evidence while they stay at or
+    /// above this fraction of the threshold.
+    static let cpuReleaseFraction = 0.8
+    /// Same band for memory; resident size moves slowly, so the band is tighter.
+    static let memoryReleaseFraction = 0.9
+
+    var cpuThreshold: Double
+    var sustainedDuration: Double
+    var memoryThresholdGB: Double
+    var autoSuspendEnabled: Bool
+
+    init(
+        cpuThreshold: Double = 100,
+        sustainedDuration: Double = 20,
+        memoryThresholdGB: Double = 2,
+        autoSuspendEnabled: Bool = false
+    ) {
+        self.cpuThreshold = Self.normalizedCPU(cpuThreshold)
+        self.sustainedDuration = Self.normalizedDuration(sustainedDuration)
+        self.memoryThresholdGB = Self.normalizedMemory(memoryThresholdGB)
+        self.autoSuspendEnabled = autoSuspendEnabled
+    }
+
+    init(defaults: UserDefaults) {
+        self.init(
+            cpuThreshold: defaults.object(forKey: Keys.threshold) as? Double ?? 100,
+            sustainedDuration: defaults.object(forKey: Keys.sustainedDuration) as? Double ?? 20,
+            memoryThresholdGB: defaults.object(forKey: Keys.memoryThresholdGB) as? Double ?? 2,
+            autoSuspendEnabled: defaults.object(forKey: Keys.autoSuspendEnabled) as? Bool ?? false
+        )
+    }
+
+    var memoryThresholdBytes: UInt64 {
+        UInt64(memoryThresholdGB * 1_024 * 1_024 * 1_024)
+    }
+
+    static func normalizedCPU(_ value: Double) -> Double {
+        guard value.isFinite else { return 100 }
+        return min(max(value, 1), 1_000)
+    }
+
+    static func normalizedDuration(_ value: Double) -> Double {
+        guard value.isFinite else { return 20 }
+        return min(max(value, 2), 300)
+    }
+
+    static func normalizedMemory(_ value: Double) -> Double {
+        guard value.isFinite else { return 2 }
+        return min(max(value, 0.1), 1_024)
+    }
+}
+
+/// Result of feeding one successful sample into the engine.
+struct MonitorUpdate: Sendable {
+    /// Classified snapshots in a stable display order.
+    let processes: [ProcessSnapshot]
+    let hot: Set<ProcessIdentity>
+    let highMemory: Set<ProcessIdentity>
+    let newlyHot: Set<ProcessIdentity>
+    let newlyHighMemory: Set<ProcessIdentity>
+    /// Processes that auto-suspend may stop now (only when enabled).
+    let autoSuspendCandidates: [ProcessSnapshot]
+}
+
+/// The UI-free detection state machine: orphan classification, sustained
+/// CPU/memory evidence with hysteresis, ignore/undo, and the auto-suspend
+/// policy. `ProcessMonitor` and `watchdog-cli watch` both drive it, so the
+/// behaviour verified through the CLI is the behaviour the app ships.
+struct MonitorEngine: Sendable {
+    private(set) var hot: Set<ProcessIdentity> = []
+    private(set) var highMemory: Set<ProcessIdentity> = []
+    private(set) var ignored: Set<ProcessIdentity> = []
+    /// Processes the user resumed by hand. Auto-suspend must respect that
+    /// decision instead of stopping the process again a window later.
+    private(set) var userResumed: Set<ProcessIdentity> = []
+
+    private var hotTracker = HotProcessTracker()
+    private var memoryTracker = MemoryProcessTracker()
+    /// Evidence (unmasked) from the previous sample. Ignoring masks the output
+    /// without discarding evidence, so undo restores a flag that survives the
+    /// next sample.
+    private var rawHot: Set<ProcessIdentity> = []
+    private var rawHighMemory: Set<ProcessIdentity> = []
+    private var enrichment: [ProcessIdentity: Enrichment] = [:]
+
+    private struct Enrichment: Sendable {
+        var workingDirectory: String?
+        var worktreeState: WorktreeState?
+    }
+
+    static let ignoreCapacity = 512
+
+    mutating func ingest(
+        _ rawSnapshots: [ProcessSnapshot],
+        settings: MonitorSettings,
+        at instant: ContinuousClock.Instant
+    ) -> MonitorUpdate {
+        var snapshots = OrphanClassifier.classify(rawSnapshots)
+        let liveIdentities = Set(snapshots.map(\.identity))
+
+        // A full enumeration that no longer contains an identity means that
+        // exact process is gone (identity includes its start time).
+        ignored.formIntersection(liveIdentities)
+        userResumed.formIntersection(liveIdentities)
+        enrichment = enrichment.filter { liveIdentities.contains($0.key) }
+
+        // Carry enrichment across samples so the project name and worktree
+        // badge do not blink while the asynchronous lookups re-run.
+        for index in snapshots.indices {
+            guard let carried = enrichment[snapshots[index].identity] else { continue }
+            if snapshots[index].workingDirectory == nil {
+                snapshots[index].workingDirectory = carried.workingDirectory
+            }
+            if snapshots[index].worktreeState == nil,
+               carried.worktreeState?.path == snapshots[index].workingDirectory {
+                snapshots[index].worktreeState = carried.worktreeState
+            }
+        }
+
+        rawHot = hotTracker.update(
+            snapshots: snapshots,
+            threshold: settings.cpuThreshold,
+            releaseFraction: MonitorSettings.cpuReleaseFraction,
+            sustainedFor: settings.sustainedDuration,
+            ignoredProcesses: [],
+            at: instant
+        )
+        rawHighMemory = memoryTracker.update(
+            snapshots: snapshots,
+            thresholdBytes: settings.memoryThresholdBytes,
+            releaseFraction: MonitorSettings.memoryReleaseFraction,
+            sustainedFor: settings.sustainedDuration,
+            ignoredProcesses: [],
+            at: instant
+        )
+
+        let previousHot = hot
+        let previousHighMemory = highMemory
+        hot = rawHot.subtracting(ignored)
+        highMemory = rawHighMemory.subtracting(ignored)
+        let newlyHot = hot.subtracting(previousHot)
+        let newlyHighMemory = highMemory.subtracting(previousHighMemory)
+
+        let candidates: [ProcessSnapshot]
+        if settings.autoSuspendEnabled {
+            candidates = snapshots.filter {
+                newlyHot.contains($0.identity) && Self.isAutoSuspendEligible($0)
+                    && !userResumed.contains($0.identity)
+            }
+        } else {
+            candidates = []
+        }
+
+        return MonitorUpdate(
+            processes: Self.displayOrder(snapshots),
+            hot: hot,
+            highMemory: highMemory,
+            newlyHot: newlyHot,
+            newlyHighMemory: newlyHighMemory,
+            autoSuspendCandidates: candidates
+        )
+    }
+
+    /// The safety contract resets evidence when a sample fails.
+    mutating func samplingFailed() {
+        hotTracker.reset()
+        memoryTracker.reset()
+        rawHot.removeAll()
+        rawHighMemory.removeAll()
+        hot.removeAll()
+        highMemory.removeAll()
+    }
+
+    /// Auto-suspend only stops a coding agent whose CPU stayed high. Memory
+    /// alone never qualifies: SIGSTOP frees no memory, and it would freeze
+    /// ordinary apps (Xcode, browsers) above the memory threshold.
+    static func isAutoSuspendEligible(_ snapshot: ProcessSnapshot) -> Bool {
+        snapshot.kind == .agent && !snapshot.isProtected && !snapshot.isSuspended
+    }
+
+    /// Stable order: orphans first, then CPU (bucketed to whole percent so
+    /// sampling noise does not reshuffle rows), then PID.
+    static func displayOrder(_ snapshots: [ProcessSnapshot]) -> [ProcessSnapshot] {
+        snapshots.sorted {
+            if $0.suspectedOrphan != $1.suspectedOrphan {
+                return $0.suspectedOrphan
+            }
+            let left = $0.cpuPercent.isFinite ? $0.cpuPercent.rounded() : 0
+            let right = $1.cpuPercent.isFinite ? $1.cpuPercent.rounded() : 0
+            if left != right { return left > right }
+            return $0.id < $1.id
+        }
+    }
+
+    // MARK: - User decisions
+
+    enum IgnoreResult: Equatable, Sendable {
+        case ignored
+        case capacityReached
+    }
+
+    mutating func ignore(_ identity: ProcessIdentity) -> IgnoreResult {
+        guard ignored.contains(identity) || ignored.count < Self.ignoreCapacity else {
+            return .capacityReached
+        }
+        ignored.insert(identity)
+        hot.remove(identity)
+        highMemory.remove(identity)
+        return .ignored
+    }
+
+    /// Returns false when the identity was not ignored.
+    @discardableResult
+    mutating func undoIgnore(_ identity: ProcessIdentity) -> Bool {
+        guard ignored.remove(identity) != nil else { return false }
+        if rawHot.contains(identity) { hot.insert(identity) }
+        if rawHighMemory.contains(identity) { highMemory.insert(identity) }
+        return true
+    }
+
+    mutating func recordUserResume(_ identity: ProcessIdentity) {
+        userResumed.insert(identity)
+    }
+
+    // MARK: - Enrichment
+
+    mutating func recordWorkingDirectory(_ directory: String?, for identity: ProcessIdentity) {
+        var entry = enrichment[identity] ?? Enrichment()
+        if entry.workingDirectory != directory {
+            entry.worktreeState = nil
+        }
+        entry.workingDirectory = directory
+        enrichment[identity] = entry
+    }
+
+    mutating func recordWorktreeState(_ state: WorktreeState?, for identity: ProcessIdentity) {
+        guard var entry = enrichment[identity],
+              entry.workingDirectory == state?.path || state == nil
+        else { return }
+        entry.worktreeState = state
+        enrichment[identity] = entry
+    }
+
+#if DEBUG
+    /// Test hook mirroring a preview load: replaces the published sets.
+    mutating func loadPreview(hot: Set<ProcessIdentity>, highMemory: Set<ProcessIdentity>) {
+        self.hot = hot.subtracting(ignored)
+        self.highMemory = highMemory.subtracting(ignored)
+        rawHot = hot
+        rawHighMemory = highMemory
+    }
+#endif
+}

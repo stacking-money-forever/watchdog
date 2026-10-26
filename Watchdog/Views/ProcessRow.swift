@@ -270,15 +270,7 @@ struct ProcessRow: View {
     }
 
     private func outcomeText(_ outcome: ProcessActionOutcome) -> String {
-        switch outcome {
-        case .signalDelivered: return "신호 전달됨 · 종료 여부는 확인되지 않음"
-        case .awaitingExit: return "신호 전달됨 · 종료 확인 중"
-        case .exited: return "종료 확인됨"
-        case .stillRunning: return "신호 후에도 실행 중"
-        case .identityChanged: return "PID가 다른 프로세스로 바뀜"
-        case .verificationFailed: return "종료 여부를 확인하지 못함"
-        case let .failed(message): return "작업 실패: \(message)"
-        }
+        outcome.localizedDescription
     }
 
     private func controlIdentifier(_ control: String) -> String {

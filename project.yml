@@ -17,6 +17,7 @@ targets:
     platform: macOS
     sources:
       - path: Watchdog
+      - path: WatchdogCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.justn.watchdog
@@ -46,6 +47,7 @@ targets:
       - path: Watchdog
         excludes:
           - WatchdogApp.swift
+      - path: WatchdogCore
       - path: WatchdogPreview
     settings:
       base:
@@ -74,6 +76,7 @@ targets:
       - path: Watchdog
         excludes:
           - WatchdogApp.swift
+      - path: WatchdogCore
       - path: WatchdogSnapshot
     settings:
       base:
@@ -86,6 +89,7 @@ targets:
         excludes:
           - WatchdogApp.swift
           - Info.plist
+      - path: WatchdogCore
       - path: WatchdogLiveQA
     settings:
       base:
@@ -93,6 +97,18 @@ targets:
         PRODUCT_NAME: WatchdogLiveQA
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+  WatchdogCLI:
+    type: tool
+    platform: macOS
+    sources:
+      - path: WatchdogCore
+      - path: WatchdogCLI
+    settings:
+      base:
+        PRODUCT_NAME: watchdog-cli
+        PRODUCT_MODULE_NAME: WatchdogCLI
+        PRODUCT_BUNDLE_IDENTIFIER: dev.justn.watchdog.cli
         ENABLE_HARDENED_RUNTIME: YES
   WatchdogE2EHelper:
     type: tool
@@ -119,6 +135,10 @@ schemes:
     build:
       targets:
         WatchdogSnapshot: all
+  WatchdogCLI:
+    build:
+      targets:
+        WatchdogCLI: all
   WatchdogE2EHelper:
     build:
       targets:

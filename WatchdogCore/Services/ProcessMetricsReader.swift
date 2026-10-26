@@ -12,6 +12,8 @@ struct LiveProcessFacts: Sendable {
     let identity: ProcessIdentity
     let executablePath: String
     let isSuspended: Bool
+    /// The process has exited and only awaits reaping by its parent.
+    var isZombie = false
 
     var isSystemPath: Bool {
         let path = executablePath.lowercased()
@@ -65,6 +67,22 @@ enum ProcessMetricsReader {
         guard result == size else {
             return errno == ESRCH ? .absent : .failed
         }
+        let identity = ProcessIdentity(
+            pid: pid,
+            startTimeMicroseconds: bsdInfo.pbi_start_tvsec * 1_000_000
+                + bsdInfo.pbi_start_tvusec,
+            userID: bsdInfo.pbi_uid
+        )
+        if bsdInfo.pbi_status == UInt32(SZOMB) {
+            return .found(
+                LiveProcessFacts(
+                    identity: identity,
+                    executablePath: "",
+                    isSuspended: false,
+                    isZombie: true
+                )
+            )
+        }
 
         var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN * 4))
         errno = 0
@@ -75,12 +93,7 @@ enum ProcessMetricsReader {
 
         return .found(
             LiveProcessFacts(
-                identity: ProcessIdentity(
-                    pid: pid,
-                    startTimeMicroseconds: bsdInfo.pbi_start_tvsec * 1_000_000
-                        + bsdInfo.pbi_start_tvusec,
-                    userID: bsdInfo.pbi_uid
-                ),
+                identity: identity,
                 executablePath: String(
                     decoding: pathBuffer.prefix(Int(pathLength)).map { UInt8(bitPattern: $0) },
                     as: UTF8.self
@@ -187,13 +200,17 @@ struct SystemMemorySnapshot: Equatable, Sendable {
 }
 
 enum SystemMetricsReader {
+    /// `mach_host_self()` returns a new send right on every call; hoisting it
+    /// avoids leaking a port reference per refresh.
+    private static let host = mach_host_self()
+
     static func cpuTicks() -> SystemCPUTicks? {
         var info = host_cpu_load_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.stride / MemoryLayout<integer_t>.stride)
 
         let result = withUnsafeMutablePointer(to: &info) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
 
@@ -209,7 +226,7 @@ enum SystemMetricsReader {
 
     static func memory() -> SystemMemorySnapshot? {
         var pageSize: vm_size_t = 0
-        guard host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return nil }
+        guard host_page_size(host, &pageSize) == KERN_SUCCESS else { return nil }
 
         var statistics = vm_statistics64()
         var count = mach_msg_type_number_t(
@@ -217,7 +234,7 @@ enum SystemMetricsReader {
         )
         let result = withUnsafeMutablePointer(to: &statistics) { pointer in
             pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                host_statistics64(host, HOST_VM_INFO64, $0, &count)
             }
         }
 
