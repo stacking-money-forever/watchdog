@@ -24,6 +24,7 @@
 		20AD94CA5091148F8987633C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FD15E53CE2D0BCF424F15B31 /* Assets.xcassets */; };
 		2494668AA14120941932C9E4 /* WatchdogMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B1785C03A9A0C61C008931 /* WatchdogMenuView.swift */; };
 		250483B30D3BC7D4CBAE0DBD /* ProcessSampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95D2446E20A77CE510668AF0 /* ProcessSampler.swift */; };
+		259406366C64382FB4B44F4A /* WatchdogCLI in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 7D9809F512FFA2861ED73FF0 /* WatchdogCLI */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		25F08E3735DF64D373CC0E13 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46B3906067473EBB37061A6E /* main.swift */; };
 		2B3A54A75C55540C4A9C2987 /* WorktreeStateResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A919D3B92028325E9A2EC87F /* WorktreeStateResolver.swift */; };
 		2CA916D4C73160C37CD4EE2B /* CLIControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A0DA4AAF1A717E149916D /* CLIControl.swift */; };
@@ -137,6 +138,13 @@
 			remoteGlobalIDString = A2F93A104FF3AC2406E49405;
 			remoteInfo = Watchdog;
 		};
+		265EF3A5A17262B578D98E58 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B77F33EDC06F9941CFBCE66A /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6DC71AA66A1796535A705202;
+			remoteInfo = WatchdogCLI;
+		};
 		5B6D79DE3E12871F718142D8 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = B77F33EDC06F9941CFBCE66A /* Project object */;
@@ -145,6 +153,20 @@
 			remoteInfo = Watchdog;
 		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7FA220C2626FCA554BA9C353 /* Embed Dependencies */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 6;
+			files = (
+				259406366C64382FB4B44F4A /* WatchdogCLI in Embed Dependencies */,
+			);
+			name = "Embed Dependencies";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		0840C5AFFCC5DA28754A672E /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
@@ -464,10 +486,12 @@
 			buildPhases = (
 				24B40EBE3DF8D128FFC36388 /* Sources */,
 				3EE5923127468F632A1C84F4 /* Resources */,
+				7FA220C2626FCA554BA9C353 /* Embed Dependencies */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				8FA40B167743FEF265403E58 /* PBXTargetDependency */,
 			);
 			name = Watchdog;
 			packageProductDependencies = (
@@ -789,6 +813,11 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		8FA40B167743FEF265403E58 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6DC71AA66A1796535A705202 /* WatchdogCLI */;
+			targetProxy = 265EF3A5A17262B578D98E58 /* PBXContainerItemProxy */;
+		};
 		988F60E709477E7F63B51ED7 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = A2F93A104FF3AC2406E49405 /* Watchdog */;
@@ -836,7 +865,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -855,7 +884,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.2;
+				MARKETING_VERSION = 0.2.3;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1098,7 +1127,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 7;
+				CURRENT_PROJECT_VERSION = 8;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1111,7 +1140,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.2;
+				MARKETING_VERSION = 0.2.3;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

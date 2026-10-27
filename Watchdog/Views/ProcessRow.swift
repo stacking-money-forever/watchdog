@@ -5,6 +5,7 @@ struct ProcessRow: View {
     let actionability: ProcessActionability
     let alertReasons: [AlertReason]
     let isIgnored: Bool
+    var isSuspendedByWatchdog = false
     let actionOutcome: ProcessActionOutcome?
     let onSuspend: () -> Void
     let onResume: () -> Void
@@ -41,6 +42,10 @@ struct ProcessRow: View {
 
                     if isIgnored {
                         statusBadge("무시 중", color: .secondary)
+                    }
+
+                    if process.isSuspended {
+                        statusBadge(isSuspendedByWatchdog ? "Watchdog이 정지함" : "정지됨", color: .blue)
                     }
                 }
 

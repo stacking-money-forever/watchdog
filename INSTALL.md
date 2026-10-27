@@ -67,6 +67,15 @@ Watchdog-0.2.2-macos.dmg  e1a3e62a060701f9d8055952cd2d8c8b61ca5038f5b5d4ed47aba6
 ./scripts/install.sh --install-dir /Applications
 ```
 
+터미널 명령 `watchdog-cli`도 함께 연결하기:
+
+```bash
+./scripts/install.sh --link-cli            # ~/.local/bin/watchdog-cli
+./scripts/install.sh --cli-dir ~/bin       # 다른 디렉터리
+```
+
+연결은 설치된 앱 안의 `Contents/MacOS/watchdog-cli`를 가리키는 심볼릭 링크이며, 같은 이름의 일반 파일은 덮어쓰지 않습니다.
+
 `/Applications` 쓰기 권한이 없는 환경에서는 기본 `~/Applications`를 사용합니다. 에이전트는 권한 상승을 추측하거나 자동으로 `sudo`를 사용하면 안 됩니다.
 
 ## 설치 확인
@@ -91,6 +100,15 @@ CFBundleShortVersionString: 0.2.2
 ```
 
 공식 `v0.2.2` 파일은 `codesign --verify` 구조 검증을 통과하지만 서명은 ad-hoc(TeamIdentifier=not set)이며 공증·스테이플링되어 있지 않습니다. 따라서 `spctl --assess`가 거부하는 것이 예상된 상태입니다.
+
+### CLI 확인
+
+```bash
+"$APP/Contents/MacOS/watchdog-cli" --version
+"$APP/Contents/MacOS/watchdog-cli" doctor
+```
+
+DMG로 설치한 경우 macOS가 처음 터미널에서 실행한 `watchdog-cli`를 막을 수 있습니다. 앱을 먼저 한 번 승인해 열고, 그래도 막히면 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 사용합니다.
 
 ## 소스에서 빌드
 
@@ -147,6 +165,7 @@ xcodebuild \
 
 ```bash
 rm -rf "$HOME/Applications/Watchdog.app"
+[ -L "$HOME/.local/bin/watchdog-cli" ] && rm "$HOME/.local/bin/watchdog-cli"
 ```
 
 로그인 시 자동 실행을 활성화했다면 제거 전에 Watchdog의 **감지 규칙 → 로그인 시 자동 실행**을 끕니다.

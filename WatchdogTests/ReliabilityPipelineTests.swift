@@ -145,6 +145,90 @@ final class ReliabilityPipelineTests: XCTestCase {
         }
     }
 
+    // MARK: - Shown list stability
+
+    func testRowsKeepPositionsWhilePresentedAndResortOnClose() async {
+        let a = agent(pid: 8_200, cpu: 90)
+        let b = agent(pid: 8_201, cpu: 10)
+        let swapped = [agent(pid: 8_201, cpu: 95), agent(pid: 8_200, cpu: 5)]
+        let newcomer = agent(pid: 8_202, cpu: 99)
+        let monitor = makeMonitor(sampler: ScriptedSampler([
+            .success([a, b]),
+            .success(swapped),
+            .success(swapped + [newcomer]),
+        ]))
+        await monitor.refresh()
+        monitor.isPresented = true
+
+        await monitor.refresh()
+        XCTAssertEqual(monitor.processes.map(\.id), [8_200, 8_201], "shown rows must not trade places")
+        XCTAssertEqual(monitor.processes.first?.cpuPercent, 5, "values still update in place")
+
+        await monitor.refresh()
+        XCTAssertEqual(monitor.processes.map(\.id), [8_200, 8_201, 8_202], "newcomers append below")
+
+        monitor.isPresented = false
+        XCTAssertEqual(monitor.processes.map(\.id), [8_202, 8_201, 8_200], "closing re-sorts")
+    }
+
+    func testPositionStableDropsExitedRows() {
+        let previous = [agent(pid: 1_001), agent(pid: 1_002), agent(pid: 1_003)]
+        let next = [agent(pid: 1_003), agent(pid: 1_001)]
+        XCTAssertEqual(ProcessMonitor.positionStable(next, previous: previous).map(\.id), [1_001, 1_003])
+    }
+
+    func testControlFlipsImmediatelyAfterSuspend() async throws {
+        let process = agent(pid: 8_210)
+        let facts = FactsBox(process)
+        let stopped = agent(pid: 8_210, state: "T")
+        let monitor = makeMonitor(
+            sampler: ScriptedSampler([.success([process])]),
+            controller: controller(facts: facts, signals: SignalLog(), onSignal: { facts.set(stopped) })
+        )
+        await monitor.refresh()
+        monitor.suspend(process)
+        for _ in 0..<50 where monitor.processes.first?.isSuspended != true {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(monitor.processes.first?.isSuspended, true, "the row reflects the stop without waiting for a sample")
+    }
+
+    func testResumeOutsideTheAppIsRespectedByAutoSuspend() async throws {
+        let signals = SignalLog()
+        let hot = agent(pid: 8_220, cpu: 300)
+        let stopped = agent(pid: 8_220, cpu: 0, state: "T")
+        let ledger = SuspensionLedger.inMemory()
+        let facts = FactsBox(hot)
+        let monitor = makeMonitor(
+            sampler: ScriptedSampler([
+                .success([hot]), .success([hot]),           // flagged → auto-suspended
+                .success([stopped]),                        // stays stopped
+                .success([hot]),                            // resumed via CLI / terminal
+                .success([hot]), .success([hot]),           // hot for another full window
+            ]),
+            ledger: ledger,
+            controller: controller(facts: facts, signals: signals)
+        )
+        monitor.sustainedDuration = 2
+        monitor.autoSuspendEnabled = true
+
+        await monitor.refresh()
+        try await Task.sleep(for: .milliseconds(2_100))
+        await monitor.refresh()
+        XCTAssertEqual(signals.values.map(\.signal), [SIGSTOP])
+
+        facts.set(stopped)
+        await monitor.refresh()
+        facts.set(hot)
+        await monitor.refresh()
+        XCTAssertTrue(ledger.all().isEmpty)
+
+        await monitor.refresh()
+        try await Task.sleep(for: .milliseconds(2_100))
+        await monitor.refresh()
+        XCTAssertEqual(signals.values.map(\.signal), [SIGSTOP], "a process resumed outside the app is not stopped again")
+    }
+
     // MARK: - Termination verdicts
 
     func testZombieCountsAsExitedAndFailureIsNotFinal() {

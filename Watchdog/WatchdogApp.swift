@@ -13,9 +13,12 @@ enum WatchdogUITestFixture {
     static let outcome = "--ui-test-outcome-fixture"
     static let exited = "--ui-test-exited-fixture"
     static let stillRunning = "--ui-test-still-running-fixture"
+    /// Live refresh loop over a scripted sampler that swaps the CPU ranking of
+    /// two rows every sample, for verifying that rows hold still while shown.
+    static let reorder = "--ui-test-reorder-fixture"
 
     static func isActive(in arguments: [String]) -> Bool {
-        [actionable, live, stale, outcome, exited, stillRunning]
+        [actionable, live, stale, outcome, exited, stillRunning, reorder]
             .contains { arguments.contains($0) }
     }
 }
@@ -44,6 +47,29 @@ private enum WatchdogUITestFixtureHost {
         window.center()
         window.makeKeyAndOrderFront(nil)
         Self.window = window
+    }
+}
+#endif
+
+#if DEBUG
+/// Alternates which of two fixture agents is busier on every sample.
+actor WatchdogReorderFixtureSampler: ProcessSampling {
+    private var flipped = false
+    private let processes: [ProcessSnapshot]
+
+    init(processes: [ProcessSnapshot]) {
+        self.processes = processes
+    }
+
+    func sample() async throws -> ProcessSample {
+        flipped.toggle()
+        let ranked = processes.enumerated().map { index, process -> ProcessSnapshot in
+            var process = process
+            let busy = (index == 0) == flipped
+            process.cpuPercent = busy ? 90 : 10
+            return process
+        }
+        return ProcessSample(processes: ranked, systemCPUPercent: 20, systemMemory: nil)
     }
 }
 #endif
@@ -283,10 +309,21 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
             monitor = ProcessMonitor(ledger: .standard())
         default:
             // Tests and fixtures never read or write the user's real defaults
-            // or suspension ledger.
+            // or suspension ledger, and never prompt for notification access.
             let suite = "dev.justn.watchdog.isolated"
             let defaults = UserDefaults(suiteName: suite) ?? .standard
             defaults.removePersistentDomain(forName: suite)
+            defaults.set(false, forKey: MonitorSettings.Keys.notificationsEnabled)
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains(WatchdogUITestFixture.reorder) {
+                monitor = ProcessMonitor(
+                    defaults: defaults,
+                    sampler: WatchdogReorderFixtureSampler(processes: Self.fixtureProcesses),
+                    ledger: .inMemory()
+                )
+                break
+            }
+            #endif
             monitor = ProcessMonitor(defaults: defaults, ledger: .inMemory())
         }
         let launchAtLogin = LaunchAtLoginController(automaticallyRegister: false)
@@ -299,8 +336,9 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
         let usesOutcomeFixture = arguments.contains(WatchdogUITestFixture.outcome)
         let usesExitedFixture = arguments.contains(WatchdogUITestFixture.exited)
         let usesStillRunningFixture = arguments.contains(WatchdogUITestFixture.stillRunning)
+        let usesReorderFixture = arguments.contains(WatchdogUITestFixture.reorder)
         shouldShowFixtureWindow = usesActionableFixture || usesLiveFixture || usesStaleFixture
-            || usesOutcomeFixture || usesExitedFixture || usesStillRunningFixture
+            || usesOutcomeFixture || usesExitedFixture || usesStillRunningFixture || usesReorderFixture
         if usesActionableFixture || usesOutcomeFixture || usesExitedFixture || usesStillRunningFixture {
             monitor.loadActionablePreview(
                 processes: Self.fixtureProcesses,
@@ -328,7 +366,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
                 highMemoryProcesses: [Self.fixtureProcesses[0].identity],
                 updatedAt: Date(timeIntervalSinceNow: -6)
             )
-        } else if usesLiveFixture || (mode == .normal && isPrimaryInstance) {
+        } else if usesLiveFixture || usesReorderFixture || (mode == .normal && isPrimaryInstance) {
             monitor.start()
         }
         if shouldShowFixtureWindow {

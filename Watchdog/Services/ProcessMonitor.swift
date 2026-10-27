@@ -89,6 +89,17 @@ final class ProcessMonitor: ObservableObject {
     /// Processes Watchdog itself stopped and that are still stopped.
     @Published private(set) var watchdogSuspended: [SuspensionRecord] = []
 
+    /// True while the menu is on screen. Rows then keep their positions across
+    /// refreshes so a click can never land on a process that moved under the
+    /// pointer; the list is fully re-sorted the next time the menu opens.
+    var isPresented = false {
+        didSet {
+            if !isPresented, oldValue {
+                processes = MonitorEngine.displayOrder(processes)
+            }
+        }
+    }
+
     private let defaults: UserDefaults
     private let sampler: any ProcessSampling
     private let ledger: SuspensionLedger
@@ -212,7 +223,9 @@ final class ProcessMonitor: ObservableObject {
         pruneNotificationCooldowns(liveIdentities: liveIdentities, at: token.instant)
         pruneActionOutcomes(at: token.instant)
 
-        processes = update.processes
+        processes = isPresented
+            ? Self.positionStable(update.processes, previous: processes)
+            : update.processes
         hotProcesses = update.hot
         highMemoryProcesses = update.highMemory
         if let systemCPUPercent = sample.systemCPUPercent {
@@ -231,6 +244,37 @@ final class ProcessMonitor: ObservableObject {
             enqueueCPUNotifications(for: update.processes.filter { update.newlyHot.contains($0.identity) })
             enqueueMemoryNotifications(for: update.processes.filter { update.newlyHighMemory.contains($0.identity) })
             sendPendingNotifications(at: token.instant)
+        }
+    }
+
+    /// Keeps rows that are still alive in their previous positions and
+    /// appends newcomers (in display order) at the end.
+    static func positionStable(
+        _ next: [ProcessSnapshot],
+        previous: [ProcessSnapshot]
+    ) -> [ProcessSnapshot] {
+        guard !previous.isEmpty else { return next }
+        let byIdentity = Dictionary(next.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen: Set<ProcessIdentity> = []
+        var result: [ProcessSnapshot] = []
+        result.reserveCapacity(next.count)
+        for old in previous {
+            if let updated = byIdentity[old.identity], seen.insert(old.identity).inserted {
+                result.append(updated)
+            }
+        }
+        for process in next where seen.insert(process.identity).inserted {
+            result.append(process)
+        }
+        return result
+    }
+
+    /// Re-reads notification permission without prompting; used when the
+    /// menu opens so a change made in System Settings shows immediately.
+    func refreshNotificationAuthorization() {
+        Task { [weak self] in
+            let status = await Self.notificationAuthorizationStatus(from: UNUserNotificationCenter.current())
+            self?.notificationAuthorization = status
         }
     }
 
@@ -492,6 +536,12 @@ final class ProcessMonitor: ObservableObject {
                 retained.append(record)
             } else {
                 _ = try? ledger.remove(record.identity)
+                if live[record.identity] != nil {
+                    // Someone continued it outside this app (the CLI, a
+                    // terminal `fg`, `kill -CONT`): treat that as the user's
+                    // decision so auto-suspend does not stop it again.
+                    engine.recordUserResume(record.identity)
+                }
             }
         }
         if retained != watchdogSuspended { watchdogSuspended = retained }
@@ -746,6 +796,8 @@ final class ProcessMonitor: ObservableObject {
             throw ProcessControlError.partiallyApplied(delivered: delivered, failure: failure)
         }
 
+        reflectLiveState(of: process.identity)
+
         switch action {
         case .suspend:
             _ = try? ledger.record(
@@ -767,6 +819,21 @@ final class ProcessMonitor: ObservableObject {
             pollTerminationOutcome(for: process.identity)
         }
         watchdogSuspended = ledger.all()
+    }
+
+    /// Updates the row from a live lookup right after a signal, so the
+    /// pause/play control flips immediately instead of a sample later.
+    private func reflectLiveState(of identity: ProcessIdentity) {
+        guard case let .found(facts) = controller.lookup(pid: identity.pid),
+              facts.identity == identity,
+              let index = processes.firstIndex(where: { $0.identity == identity })
+        else { return }
+        let stopped = processes[index].isSuspended
+        if facts.isSuspended && !stopped {
+            processes[index].state = "T"
+        } else if !facts.isSuspended && stopped {
+            processes[index].state = processes[index].state.replacingOccurrences(of: "T", with: "S")
+        }
     }
 
     private func performImmediate(
