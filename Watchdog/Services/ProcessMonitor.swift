@@ -37,8 +37,12 @@ private struct NotificationCooldownKey: Hashable {
 @MainActor
 final class ProcessMonitor: ObservableObject {
     @Published private(set) var processes: [ProcessSnapshot] = []
-    @Published private(set) var hotProcesses: Set<ProcessIdentity> = []
-    @Published private(set) var highMemoryProcesses: Set<ProcessIdentity> = []
+    @Published private(set) var hotProcesses: Set<ProcessIdentity> = [] {
+        didSet { updateAlertCount() }
+    }
+    @Published private(set) var highMemoryProcesses: Set<ProcessIdentity> = [] {
+        didSet { updateAlertCount() }
+    }
     @Published private(set) var systemCPUPercent: Double = 0
     @Published private(set) var systemMemory: SystemMemorySnapshot?
     @Published private(set) var lastUpdated: Date?
@@ -96,6 +100,10 @@ final class ProcessMonitor: ObservableObject {
         didSet {
             if !isPresented, oldValue {
                 processes = MonitorEngine.displayOrder(processes)
+            } else if isPresented, !oldValue {
+                // Worktree state is display-only and skipped while closed.
+                let snapshots = processes
+                Task { [weak self] in await self?.resolveWorktreeStates(snapshots: snapshots) }
             }
         }
     }
@@ -111,6 +119,7 @@ final class ProcessMonitor: ObservableObject {
     private let clock = ContinuousClock()
     private var engine = MonitorEngine()
     private var refreshTask: Task<Void, Never>?
+    private var refreshInFlight = false
     private var observation: ObservationToken?
     private var generation: UInt64 = 0
     private var notificationCooldowns: [NotificationCooldownKey: ContinuousClock.Instant] = [:]
@@ -153,8 +162,13 @@ final class ProcessMonitor: ObservableObject {
 
     /// Orphans are informational: a detached-but-healthy agent must not keep
     /// the menu bar badge lit. Only live CPU/memory pressure counts as an alert.
-    var alertCount: Int {
-        hotProcesses.union(highMemoryProcesses).count
+    /// Stored and only written when it changes, so the menu bar label is
+    /// not re-rendered on every sample.
+    @Published private(set) var alertCount = 0
+
+    private func updateAlertCount() {
+        let count = hotProcesses.union(highMemoryProcesses).count
+        if count != alertCount { alertCount = count }
     }
 
 
@@ -180,10 +194,18 @@ final class ProcessMonitor: ObservableObject {
         }
     }
 
-    func refresh() async {
-        guard !isRefreshing else { return }
+    /// A refresh the user asked for; only this one shows the spinner.
+    func refreshNow() async {
+        guard !refreshInFlight else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        await refresh()
+    }
+
+    func refresh() async {
+        guard !refreshInFlight else { return }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
 
         do {
             let sample = try await sampler.sample()
@@ -195,7 +217,9 @@ final class ProcessMonitor: ObservableObject {
                 await self?.mergeWorkingDirectory(result)
             }
             await autoSuspend(lastUpdate)
-            await resolveWorktreeStates(snapshots: processes)
+            if isPresented {
+                await resolveWorktreeStates(snapshots: processes)
+            }
         } catch {
             samplingFailed(error)
             await authorization.invalidateAll()
@@ -226,14 +250,14 @@ final class ProcessMonitor: ObservableObject {
         processes = isPresented
             ? Self.positionStable(update.processes, previous: processes)
             : update.processes
-        hotProcesses = update.hot
-        highMemoryProcesses = update.highMemory
-        if let systemCPUPercent = sample.systemCPUPercent {
+        if hotProcesses != update.hot { hotProcesses = update.hot }
+        if highMemoryProcesses != update.highMemory { highMemoryProcesses = update.highMemory }
+        if let systemCPUPercent = sample.systemCPUPercent, systemCPUPercent != self.systemCPUPercent {
             self.systemCPUPercent = systemCPUPercent
         }
-        systemMemory = sample.systemMemory
+        if systemMemory != sample.systemMemory { systemMemory = sample.systemMemory }
         lastUpdated = Date()
-        samplingError = nil
+        if samplingError != nil { samplingError = nil }
         refreshWatchdogSuspended(liveProcesses: update.processes)
 
         if notificationsEnabled, notificationAuthorization != .denied {
@@ -585,7 +609,7 @@ final class ProcessMonitor: ObservableObject {
     ) {
         guard observation?.generation == generation else { return }
         for index in processes.indices
-        where processes[index].workingDirectory == path {
+        where processes[index].workingDirectory == path && processes[index].worktreeState != state {
             processes[index].worktreeState = state
             engine.recordWorktreeState(state, for: processes[index].identity)
         }
@@ -885,8 +909,13 @@ final class ProcessMonitor: ObservableObject {
         else {
             return
         }
+        // The resolver answers from its cache every sample; the engine
+        // already carried the value forward, so an unchanged answer must not
+        // publish again or start another worktree lookup.
+        guard processes[index].workingDirectory != result.workingDirectory else { return }
         processes[index].workingDirectory = result.workingDirectory
         engine.recordWorkingDirectory(result.workingDirectory, for: result.identity)
+        guard isPresented else { return }
         let snapshot = processes[index]
         Task { [weak self] in
             await self?.resolveWorktreeStates(snapshots: [snapshot])

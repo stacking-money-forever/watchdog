@@ -268,6 +268,16 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+private struct WatchdogMenuBarLabel: View {
+    let monitor: ProcessMonitor
+    @State private var alertCount = 0
+
+    var body: some View {
+        WatchdogMenuBarIcon(alertCount: alertCount)
+            .onReceive(monitor.$alertCount.removeDuplicates()) { alertCount = $0 }
+    }
+}
+
 private struct WatchdogMenuBarIcon: View {
     let alertCount: Int
 
@@ -310,7 +320,10 @@ private var isRunningUnitTests: Bool {
 
 @main
 struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.self) private var appDelegate
-    @StateObject private var monitor: ProcessMonitor
+    // Owned but deliberately not observed: observing it re-evaluated the whole
+    // scene on every published change. The panel observes it itself and the
+    // label listens to alertCount alone.
+    @State private var monitor: ProcessMonitor
     @StateObject private var launchAtLogin: LaunchAtLoginController
     private let showsFixtureWindow: Bool
 
@@ -399,7 +412,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
             monitor.start()
         }
         #endif
-        _monitor = StateObject(wrappedValue: monitor)
+        _monitor = State(initialValue: monitor)
         _launchAtLogin = StateObject(wrappedValue: launchAtLogin)
         showsFixtureWindow = shouldShowFixtureWindow
         appDelegate.launchAtLoginController = launchAtLogin
@@ -418,7 +431,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
             WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
                 .frame(width: 380, height: 520)
         } label: {
-            WatchdogMenuBarIcon(alertCount: monitor.alertCount)
+            WatchdogMenuBarLabel(monitor: monitor)
         }
         .menuBarExtraStyle(.window)
     }

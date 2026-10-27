@@ -99,6 +99,16 @@ struct WatchdogMenuView: View {
         .onReceive(monitor.$processes) { _ in
             dismissConfirmationIfInvalid()
         }
+        // A failed sample clears pending confirmations without publishing
+        // processes, and no sample may arrive before the 30 s validity ends.
+        .onReceive(monitor.$samplingError) { _ in
+            dismissConfirmationIfInvalid()
+        }
+        .task(id: pendingAction?.id) {
+            guard pendingAction != nil else { return }
+            try? await Task.sleep(for: ProcessMonitor.confirmationValidity + .milliseconds(100))
+            dismissConfirmationIfInvalid()
+        }
         .onAppear {
             isShown = true
             monitor.isPresented = true
@@ -391,7 +401,7 @@ struct WatchdogMenuView: View {
             Spacer()
 
             Button {
-                Task { await monitor.refresh() }
+                Task { await monitor.refreshNow() }
             } label: {
                 if monitor.isRefreshing {
                     ProgressView()
