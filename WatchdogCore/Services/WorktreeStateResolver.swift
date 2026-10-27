@@ -238,7 +238,12 @@ actor WorktreeStateResolver {
                 runner: runner,
                 deadline: deadline
             )
-            return parseStatus(output: output, path: path)
+            let state = parseStatus(output: output, path: path)
+            guard lacksUpstream(output) else { return state }
+            // Without an upstream git prints no ahead/behind line, so commits
+            // on a new local branch (or a detached HEAD) looked "clean" while
+            // existing nowhere else. Count commits no remote branch contains.
+            return await withUnpublishedCommits(state, path: path, runner: runner, deadline: deadline)
         } catch let error as CommandRunnerError where error.isTransient {
             // The probe never produced an answer (timeout, cancellation, no
             // helper slot). Report it without caching it as a verdict.
@@ -246,6 +251,47 @@ actor WorktreeStateResolver {
         } catch {
             return WorktreeState(path: path, verdict: .unavailable, detail: nil)
         }
+    }
+
+    /// True when HEAD has commits but no upstream to compare against.
+    static func lacksUpstream(_ output: String) -> Bool {
+        let lines = output.split(whereSeparator: \Character.isNewline)
+        guard !lines.contains(where: { $0.hasPrefix("# branch.upstream ") }) else { return false }
+        return !lines.contains(where: { $0 == "# branch.oid (initial)" })
+    }
+
+    private static func withUnpublishedCommits(
+        _ state: WorktreeState,
+        path: String,
+        runner: Runner,
+        deadline: Duration
+    ) async -> WorktreeState {
+        guard
+            let remotes = try? await runGit(
+                path: path,
+                arguments: ["for-each-ref", "--count=1", "--format=%(refname)", "refs/remotes"],
+                runner: runner,
+                deadline: deadline
+            )
+        else {
+            return state
+        }
+        // A local-only repository has nothing to compare against.
+        guard !remotes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return state }
+        guard
+            let output = try? await runGit(
+                path: path,
+                arguments: ["rev-list", "--count", "HEAD", "--not", "--remotes"],
+                runner: runner,
+                deadline: deadline
+            ),
+            let count = Int(output.trimmingCharacters(in: .whitespacesAndNewlines)),
+            count > 0
+        else {
+            return state
+        }
+        let detail = [state.detail, "원격에 없는 \(count)커밋"].compactMap { $0 }.joined(separator: " · ")
+        return WorktreeState(path: path, verdict: .dirty, detail: detail)
     }
 
     static func parseStatus(output: String, path: String) -> WorktreeState {

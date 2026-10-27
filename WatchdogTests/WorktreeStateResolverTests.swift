@@ -17,6 +17,37 @@ final class WorktreeStateResolverTests: XCTestCase {
         XCTAssertEqual(state.detail, "feature/alert-policy")
     }
 
+    func testBranchWithoutUpstreamReportsCommitsMissingFromRemotes() async {
+        // An agent committed on a new local branch: git prints no ahead line,
+        // so the worktree looked clean while its commits existed nowhere else.
+        let directory = FileManager.default.temporaryDirectory.path
+        let state = await WorktreeStateResolver.lookup(
+            path: directory,
+            runner: { _, arguments, _ in
+                if arguments.contains("status") { return "# branch.oid abc\n# branch.head agent/fix\n" }
+                if arguments.contains("for-each-ref") { return "refs/remotes/origin/main\n" }
+                if arguments.contains("rev-list") { return "3\n" }
+                return ""
+            },
+            deadline: .seconds(1)
+        )
+        XCTAssertEqual(state?.verdict, .dirty)
+        XCTAssertEqual(state?.detail, "agent/fix · 원격에 없는 3커밋")
+    }
+
+    func testLocalOnlyRepositoryWithoutRemotesStaysClean() async {
+        let directory = FileManager.default.temporaryDirectory.path
+        let state = await WorktreeStateResolver.lookup(
+            path: directory,
+            runner: { _, arguments, _ in
+                if arguments.contains("status") { return "# branch.oid abc\n# branch.head main\n" }
+                return ""
+            },
+            deadline: .seconds(1)
+        )
+        XCTAssertEqual(state?.verdict, .clean)
+    }
+
     func testParseStatusDirtyWorktreeCountsEntries() {
         let output = """
         # branch.head main
@@ -94,7 +125,7 @@ final class WorktreeStateResolverTests: XCTestCase {
         let resolver = WorktreeStateResolver(
             runner: { _, _, _ in
                 await counter.increment()
-                return "# branch.head main\n"
+                return "# branch.head main\n# branch.upstream origin/main\n"
             }
         )
         let collector = StateCollector()
@@ -149,7 +180,7 @@ final class WorktreeStateResolverTests: XCTestCase {
             runner: { _, _, _ in
                 await counter.increment()
                 try? await Task.sleep(for: .milliseconds(10))
-                return "# branch.head main\n"
+                return "# branch.head main\n# branch.upstream origin/main\n"
             }
         )
         let collector = StateCollector()
