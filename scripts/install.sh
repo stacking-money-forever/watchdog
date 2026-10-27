@@ -111,6 +111,14 @@ install_dir="$(cd "$install_dir" && pwd -P)"
 target_app="$install_dir/Watchdog.app"
 backup_app="$install_dir/.Watchdog.app.backup.$$"
 
+# Fail before touching a running Watchdog: stopping it and then failing to
+# move the bundle would leave monitoring silently off.
+if [[ ! -w "$install_dir" ]] || { [[ -d "$target_app" ]] && [[ ! -w "$target_app" ]]; }; then
+  echo "Cannot write to $install_dir (or replace its Watchdog.app); nothing was changed." >&2
+  exit 1
+fi
+
+was_running=false
 if [[ -d "$target_app" ]]; then
   target_executable="$target_app/Contents/MacOS/Watchdog"
   is_installed_process() {
@@ -135,7 +143,20 @@ if [[ -d "$target_app" ]]; then
   done < <(pgrep -x Watchdog || true)
 
   if ((${#running_pids[@]})); then
-    echo "Stopping the installed Watchdog gracefully…"
+    was_running=true
+    # SIGTERM skips the app's "resume and quit" prompt, so processes Watchdog
+    # paused stay paused. The relaunch below lists them again; without a
+    # relaunch nothing would, so refuse instead.
+    stopped_count="$("$staged_app/Contents/MacOS/watchdog-cli" stopped --json 2>/dev/null | grep -c '"token"' || true)"
+    if [[ "${stopped_count:-0}" -gt 0 ]]; then
+      if $launch_after_install; then
+        echo "Note: $stopped_count process(es) paused by Watchdog stay paused; the updated app lists them on launch."
+      else
+        echo "Watchdog has paused $stopped_count process(es). Resume them first (watchdog-cli stopped --resume-all, or quit Watchdog from its menu), or install without --no-launch." >&2
+        exit 1
+      fi
+    fi
+    echo "Stopping the installed Watchdog (SIGTERM)…"
     for pid in "${running_pids[@]}"; do
       is_installed_process "$pid" || continue
       /bin/kill -TERM "$pid"
@@ -168,6 +189,9 @@ if mv "$staged_app" "$target_app"; then
 else
   [[ ! -d "$backup_app" ]] || mv "$backup_app" "$target_app"
   echo "Installation failed; the previous app was restored." >&2
+  if $was_running && [[ -d "$target_app" ]]; then
+    open "$target_app" || true
+  fi
   exit 1
 fi
 
