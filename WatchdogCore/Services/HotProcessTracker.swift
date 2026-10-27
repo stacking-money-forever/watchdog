@@ -1,7 +1,11 @@
 import Foundation
 
 struct HotProcessTracker {
-    private var base = SustainedProcessTracker<Double>()
+    private var base: SustainedProcessTracker<Double>
+
+    init(continuityGap: Duration = .seconds(5)) {
+        base = SustainedProcessTracker(continuityGap: continuityGap)
+    }
 
     mutating func reset() {
         base.reset()

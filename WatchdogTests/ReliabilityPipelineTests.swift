@@ -229,6 +229,56 @@ final class ReliabilityPipelineTests: XCTestCase {
         XCTAssertEqual(signals.values.map(\.signal), [SIGSTOP], "a process resumed outside the app is not stopped again")
     }
 
+    func testSampleTakenBeforeASuspendDoesNotDropTheNewRecord() async throws {
+        // The CLI (or a click) stopped the process while a sample that still
+        // saw it running was in flight. The record must survive that sample.
+        let running = agent(pid: 8_230, cpu: 10)
+        let stopped = agent(pid: 8_230, cpu: 0, state: "T")
+        let ledger = SuspensionLedger.inMemory()
+        _ = try ledger.record(SuspensionRecord(
+            identity: running.identity,
+            executablePath: running.executablePath,
+            suspendedAt: Date(),
+            source: .cli
+        ))
+        let monitor = makeMonitor(
+            sampler: ScriptedSampler([.success([running])]),
+            ledger: ledger,
+            controller: controller(facts: FactsBox(stopped), signals: SignalLog())
+        )
+
+        await monitor.refresh()
+
+        XCTAssertEqual(ledger.all().map(\.identity), [running.identity])
+        XCTAssertEqual(monitor.watchdogSuspended.map(\.identity), [running.identity])
+    }
+
+    func testIgnoredSuspendedProcessCanStillBeResumed() async throws {
+        let signals = SignalLog()
+        let stopped = agent(pid: 8_231, cpu: 0, state: "T")
+        let ledger = SuspensionLedger.inMemory()
+        _ = try ledger.record(SuspensionRecord(
+            identity: stopped.identity,
+            executablePath: stopped.executablePath,
+            suspendedAt: Date(),
+            source: .auto
+        ))
+        let facts = FactsBox(stopped)
+        let monitor = makeMonitor(
+            sampler: ScriptedSampler([.success([stopped]), .success([stopped])]),
+            ledger: ledger,
+            controller: controller(facts: facts, signals: signals)
+        )
+        await monitor.refresh()
+        monitor.ignoreUntilExit(stopped)
+
+        let result = await monitor.resumeAllWatchdogSuspended()
+
+        XCTAssertEqual(result.resumed, 1)
+        XCTAssertEqual(result.failed, 0)
+        XCTAssertEqual(signals.values.map(\.signal), [SIGCONT])
+    }
+
     // MARK: - Termination verdicts
 
     func testZombieCountsAsExitedAndFailureIsNotFinal() {
@@ -345,6 +395,32 @@ final class ReliabilityPipelineTests: XCTestCase {
         let process = agent(pid: 8_040, state: "T")
         try ledger.record(SuspensionRecord(identity: process.identity, executablePath: "x", suspendedAt: Date(), source: .manual))
         XCTAssertEqual(ledger.all().count, 1)
+    }
+
+    func testLedgerKeepsReadableRecordsAndSetsTheDamagedFileAside() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watchdog-ledger-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("suspensions.json")
+        let good = agent(pid: 8_041, state: "T")
+        let seed = SuspensionLedger(fileURL: url)
+        try seed.record(SuspensionRecord(identity: good.identity, executablePath: "x", suspendedAt: Date(), source: .manual))
+        // Append an entry from a hypothetical newer version.
+        var entries = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [[String: Any]]
+        var future = entries[0]
+        future["source"] = "scheduler"
+        future["pid"] = 8_042
+        entries.append(future)
+        try JSONSerialization.data(withJSONObject: entries).write(to: url)
+
+        let ledger = SuspensionLedger(fileURL: url)
+        XCTAssertEqual(ledger.all().map(\.identity), [good.identity])
+        XCTAssertEqual(ledger.all().map(\.identity), [good.identity])
+
+        let asides = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+            .filter { $0.contains(".corrupt-") }
+        XCTAssertEqual(asides.count, 1, "the damaged original is kept once, not on every read")
     }
 
     // MARK: - Live libproc sampling

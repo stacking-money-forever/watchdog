@@ -1,3 +1,4 @@
+import Combine
 import Darwin
 import Foundation
 import XCTest
@@ -476,6 +477,7 @@ final class ProcessMonitorTests: XCTestCase {
         )
         let process = snapshot(pid: 5_504, name: "/usr/local/bin/gjc")
         monitor.loadActionablePreview(processes: [process], hotProcesses: [], updatedAt: Date())
+        monitor.isPresented = true
 
         monitor.mergeWorkingDirectoryPreview(
             WorkingDirectoryResult(
@@ -492,6 +494,64 @@ final class ProcessMonitorTests: XCTestCase {
         XCTAssertEqual(monitor.processes.first?.workingDirectory, "/tmp")
         XCTAssertEqual(monitor.processes.first?.worktreeState?.verdict, .clean)
         XCTAssertEqual(monitor.processes.first?.worktreeState?.detail, "main")
+    }
+
+    func testWorktreeLookupWaitsUntilThePanelOpens() async throws {
+        // Worktree state is display-only; running git for every agent while
+        // nobody can see the panel is wasted work.
+        let calls = RunnerCallCounter()
+        let worktreeResolver = WorktreeStateResolver(
+            policy: .init(
+                maximumConcurrentLookups: 1,
+                lookupDeadline: .milliseconds(100),
+                cacheCapacity: 1,
+                positiveTTL: .seconds(1),
+                negativeTTL: .seconds(1)
+            ),
+            runner: { _, _, _ in _ = calls.next(); return "# branch.head main\n" }
+        )
+        let monitor = ProcessMonitor(
+            defaults: makeDefaults(),
+            worktreeResolver: worktreeResolver,
+            notificationRequestSender: { _ in }
+        )
+        let process = snapshot(pid: 5_505, name: "/usr/local/bin/gjc")
+        monitor.loadActionablePreview(processes: [process], hotProcesses: [], updatedAt: Date())
+        monitor.mergeWorkingDirectoryPreview(
+            WorkingDirectoryResult(
+                generation: monitor.previewGeneration,
+                identity: process.identity,
+                workingDirectory: "/tmp"
+            )
+        )
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(calls.count, 0)
+        XCTAssertNil(monitor.processes.first?.worktreeState)
+
+        monitor.isPresented = true
+        for _ in 0..<20 where monitor.processes.first?.worktreeState == nil {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(monitor.processes.first?.worktreeState?.verdict, .clean)
+    }
+
+    func testUnchangedWorkingDirectoryDoesNotRepublish() {
+        let monitor = ProcessMonitor(defaults: makeDefaults(), notificationRequestSender: { _ in })
+        let process = snapshot(pid: 5_506, name: "/usr/local/bin/gjc")
+        monitor.loadActionablePreview(processes: [process], hotProcesses: [], updatedAt: Date())
+        let result = WorkingDirectoryResult(
+            generation: monitor.previewGeneration,
+            identity: process.identity,
+            workingDirectory: "/tmp"
+        )
+        monitor.mergeWorkingDirectoryPreview(result)
+        var changes = 0
+        let subscription = monitor.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel() }
+
+        monitor.mergeWorkingDirectoryPreview(result)
+
+        XCTAssertEqual(changes, 0)
     }
 
     func testTerminationLookupClassificationIsAuthoritative() {
@@ -809,4 +869,12 @@ private actor ResolverGate {
         active -= 1
         waiters.removeFirst().resume(returning: nil)
     }
+}
+
+private final class RunnerCallCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    var count: Int { lock.withLock { value } }
+    func next() -> Int { lock.withLock { value += 1; return value } }
 }

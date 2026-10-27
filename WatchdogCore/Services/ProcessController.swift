@@ -18,6 +18,9 @@ enum ProcessControlError: LocalizedError, Sendable {
     case observationRefreshed
     /// The user chose to ignore this process; controls are disabled for it.
     case processIgnored
+    /// The suspension could not be written to the ledger, so no SIGSTOP was
+    /// sent: a stop Watchdog cannot remember is one it could never undo.
+    case ledgerUnavailable(String)
     /// A multi-signal plan stopped after some signals were already delivered.
     indirect case partiallyApplied(delivered: [Int32], failure: ProcessControlError)
 
@@ -36,6 +39,7 @@ enum ProcessControlError: LocalizedError, Sendable {
         case .confirmationExpired: return "확인 시간이 지나 작업을 취소했습니다. 다시 시도하세요."
         case .observationRefreshed: return "작업 중 프로세스 정보가 갱신되어 취소했습니다. 다시 시도하세요."
         case .processIgnored: return "무시 중인 프로세스는 제어할 수 없습니다. 무시를 해제한 뒤 다시 시도하세요."
+        case let .ledgerUnavailable(reason): return "정지 기록을 저장할 수 없어 일시 정지하지 않았습니다: \(reason)"
         case let .partiallyApplied(delivered, failure):
             let names = delivered.map(ProcessControlError.signalName).joined(separator: ", ")
             return "\(names) 전송 후 중단됨: \(failure.errorDescription ?? "알 수 없는 오류")"

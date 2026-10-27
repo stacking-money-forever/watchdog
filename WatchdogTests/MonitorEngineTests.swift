@@ -28,6 +28,27 @@ final class MonitorEngineTests: XCTestCase {
         XCTAssertEqual(update?.hot, [agent(pid: 9_001).identity])
     }
 
+    func testSlowSamplingNeedsAWiderContinuityGap() {
+        // `watch --interval 10`: with the default 5 s gap every sample looked
+        // like a break in evidence and nothing ever alerted.
+        let start = ContinuousClock().now
+        func hotAfterThreeSamples(_ engine: inout MonitorEngine) -> Set<ProcessIdentity> {
+            var update: MonitorUpdate?
+            for index in 0..<3 {
+                update = engine.ingest(
+                    [agent(pid: 9_050, cpu: 200)],
+                    settings: settings,
+                    at: start.advanced(by: .seconds(index * 10))
+                )
+            }
+            return update?.hot ?? []
+        }
+        var narrow = MonitorEngine()
+        XCTAssertTrue(hotAfterThreeSamples(&narrow).isEmpty)
+        var wide = MonitorEngine(continuityGap: .seconds(25))
+        XCTAssertEqual(hotAfterThreeSamples(&wide), [agent(pid: 9_050).identity])
+    }
+
     func testDropBelowReleaseBandClearsEvidence() {
         var engine = MonitorEngine()
         let start = ContinuousClock().now

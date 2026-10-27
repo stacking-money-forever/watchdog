@@ -115,6 +115,43 @@ final class CLIControlTests: XCTestCase {
         XCTAssertTrue(ledger.all().isEmpty)
     }
 
+    func testSuspendingAnAlreadyStoppedProcessLeavesNoLedgerRecord() async throws {
+        // Ctrl-Z'd by the user: Watchdog must never later "resume" it.
+        var process = agent(pid: 5_101)
+        process.state = "T"
+        let world = FakeWorld(process)
+        let ledger = SuspensionLedger.inMemory()
+
+        let result = try await world.control(ledger: ledger)
+            .run(.suspend, target: .token(IdentityToken(process.identity)), force: false)
+
+        guard case .performed = result else { return XCTFail("\(result)") }
+        XCTAssertTrue(ledger.all().isEmpty)
+    }
+
+    func testUnwritableLedgerPreventsTheStop() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watchdog-ro-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let ledger = SuspensionLedger(fileURL: directory.appendingPathComponent("sub/suspensions.json"))
+        let process = agent(pid: 5_102)
+        let world = FakeWorld(process)
+
+        let result = try await world.control(ledger: ledger)
+            .run(.suspend, target: .token(IdentityToken(process.identity)), force: false)
+
+        guard case let .failed(error, refused) = result, case .ledgerUnavailable = error else {
+            return XCTFail("\(result)")
+        }
+        XCTAssertFalse(refused)
+        XCTAssertEqual(world.signals, [], "no SIGSTOP without a record")
+    }
+
     func testBlockedTerminateSendsNothing() async throws {
         let process = agent(pid: 5_101)
         let world = FakeWorld(process)

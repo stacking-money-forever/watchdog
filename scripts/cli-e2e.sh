@@ -100,6 +100,8 @@ check "doctor" expect_exit 0 "$cli" doctor
 check "list --json" expect_exit 0 "$cli" list --scope all --json --interval 0.2
 check "watch runs a bounded session" expect_exit 0 "$cli" watch --count 3 --interval 0.5 --json
 check "watch emitted start and end events" grep -q '"watch.end"' "$work/last.out"
+check "watch --count 0 is a usage error" expect_exit 2 "$cli" watch --count 0
+check "watch --count abc is a usage error" expect_exit 2 "$cli" watch --count abc
 
 echo "Suspend / resume (reversible)"
 a=$(start_helper a); spawned+=("$a")

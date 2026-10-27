@@ -37,8 +37,12 @@ private struct NotificationCooldownKey: Hashable {
 @MainActor
 final class ProcessMonitor: ObservableObject {
     @Published private(set) var processes: [ProcessSnapshot] = []
-    @Published private(set) var hotProcesses: Set<ProcessIdentity> = []
-    @Published private(set) var highMemoryProcesses: Set<ProcessIdentity> = []
+    @Published private(set) var hotProcesses: Set<ProcessIdentity> = [] {
+        didSet { updateAlertCount() }
+    }
+    @Published private(set) var highMemoryProcesses: Set<ProcessIdentity> = [] {
+        didSet { updateAlertCount() }
+    }
     @Published private(set) var systemCPUPercent: Double = 0
     @Published private(set) var systemMemory: SystemMemorySnapshot?
     @Published private(set) var lastUpdated: Date?
@@ -96,6 +100,10 @@ final class ProcessMonitor: ObservableObject {
         didSet {
             if !isPresented, oldValue {
                 processes = MonitorEngine.displayOrder(processes)
+            } else if isPresented, !oldValue {
+                // Worktree state is display-only and skipped while closed.
+                let snapshots = processes
+                Task { [weak self] in await self?.resolveWorktreeStates(snapshots: snapshots) }
             }
         }
     }
@@ -111,6 +119,7 @@ final class ProcessMonitor: ObservableObject {
     private let clock = ContinuousClock()
     private var engine = MonitorEngine()
     private var refreshTask: Task<Void, Never>?
+    private var refreshInFlight = false
     private var observation: ObservationToken?
     private var generation: UInt64 = 0
     private var notificationCooldowns: [NotificationCooldownKey: ContinuousClock.Instant] = [:]
@@ -153,8 +162,13 @@ final class ProcessMonitor: ObservableObject {
 
     /// Orphans are informational: a detached-but-healthy agent must not keep
     /// the menu bar badge lit. Only live CPU/memory pressure counts as an alert.
-    var alertCount: Int {
-        hotProcesses.union(highMemoryProcesses).count
+    /// Stored and only written when it changes, so the menu bar label is
+    /// not re-rendered on every sample.
+    @Published private(set) var alertCount = 0
+
+    private func updateAlertCount() {
+        let count = hotProcesses.union(highMemoryProcesses).count
+        if count != alertCount { alertCount = count }
     }
 
 
@@ -180,10 +194,18 @@ final class ProcessMonitor: ObservableObject {
         }
     }
 
-    func refresh() async {
-        guard !isRefreshing else { return }
+    /// A refresh the user asked for; only this one shows the spinner.
+    func refreshNow() async {
+        guard !refreshInFlight else { return }
         isRefreshing = true
         defer { isRefreshing = false }
+        await refresh()
+    }
+
+    func refresh() async {
+        guard !refreshInFlight else { return }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
 
         do {
             let sample = try await sampler.sample()
@@ -195,7 +217,9 @@ final class ProcessMonitor: ObservableObject {
                 await self?.mergeWorkingDirectory(result)
             }
             await autoSuspend(lastUpdate)
-            await resolveWorktreeStates(snapshots: processes)
+            if isPresented {
+                await resolveWorktreeStates(snapshots: processes)
+            }
         } catch {
             samplingFailed(error)
             await authorization.invalidateAll()
@@ -226,14 +250,14 @@ final class ProcessMonitor: ObservableObject {
         processes = isPresented
             ? Self.positionStable(update.processes, previous: processes)
             : update.processes
-        hotProcesses = update.hot
-        highMemoryProcesses = update.highMemory
-        if let systemCPUPercent = sample.systemCPUPercent {
+        if hotProcesses != update.hot { hotProcesses = update.hot }
+        if highMemoryProcesses != update.highMemory { highMemoryProcesses = update.highMemory }
+        if let systemCPUPercent = sample.systemCPUPercent, systemCPUPercent != self.systemCPUPercent {
             self.systemCPUPercent = systemCPUPercent
         }
-        systemMemory = sample.systemMemory
+        if systemMemory != sample.systemMemory { systemMemory = sample.systemMemory }
         lastUpdated = Date()
-        samplingError = nil
+        if samplingError != nil { samplingError = nil }
         refreshWatchdogSuspended(liveProcesses: update.processes)
 
         if notificationsEnabled, notificationAuthorization != .denied {
@@ -397,7 +421,7 @@ final class ProcessMonitor: ObservableObject {
         for process: ProcessSnapshot
     ) throws -> DestructiveActionConfirmationRequest {
         guard action.isDestructive else { throw ProcessControlError.authorizationInvalid }
-        try requireActionable(process)
+        try requireActionable(process, for: action)
         let requestedAt = clock.now
         pendingConfirmations = pendingConfirmations.filter {
             requestedAt < $0.value.advanced(by: Self.confirmationValidity)
@@ -429,7 +453,7 @@ final class ProcessMonitor: ObservableObject {
         guard let process = processes.first(where: { $0.identity == request.identity }) else {
             throw ProcessControlError.processChanged
         }
-        let observation = try requireActionable(process)
+        let observation = try requireActionable(process, for: request.action)
         let nonce = try await authorization.mint(
             action: request.action,
             identity: request.identity,
@@ -534,14 +558,33 @@ final class ProcessMonitor: ObservableObject {
         for record in records {
             if let process = live[record.identity], process.isSuspended {
                 retained.append(record)
-            } else {
-                _ = try? ledger.remove(record.identity)
-                if live[record.identity] != nil {
-                    // Someone continued it outside this app (the CLI, a
-                    // terminal `fg`, `kill -CONT`): treat that as the user's
-                    // decision so auto-suspend does not stop it again.
-                    engine.recordUserResume(record.identity)
-                }
+                continue
+            }
+            // The sample was taken off the main actor and may predate a
+            // suspend that finished while it ran (here or from the CLI).
+            // Trusting it would drop a fresh record and leave the process
+            // frozen but forgotten, so confirm with a live lookup first.
+            let current = controller.lookup(pid: record.identity.pid)
+            if case let .found(facts) = current, facts.identity == record.identity, facts.isSuspended {
+                retained.append(record)
+                continue
+            }
+            if case .failed = current {
+                retained.append(record)
+                continue
+            }
+            // The CLI writes its record just before sending SIGSTOP; a lookup
+            // in between still sees the process running.
+            if record.source == .cli, Date().timeIntervalSince(record.suspendedAt) < 5 {
+                retained.append(record)
+                continue
+            }
+            _ = try? ledger.remove(record.identity)
+            if case let .found(facts) = current, facts.identity == record.identity {
+                // Someone continued it outside this app (the CLI, a
+                // terminal `fg`, `kill -CONT`): treat that as the user's
+                // decision so auto-suspend does not stop it again.
+                engine.recordUserResume(record.identity)
             }
         }
         if retained != watchdogSuspended { watchdogSuspended = retained }
@@ -572,7 +615,7 @@ final class ProcessMonitor: ObservableObject {
     ) {
         guard observation?.generation == generation else { return }
         for index in processes.indices
-        where processes[index].workingDirectory == path {
+        where processes[index].workingDirectory == path && processes[index].worktreeState != state {
             processes[index].worktreeState = state
             engine.recordWorktreeState(state, for: processes[index].identity)
         }
@@ -721,14 +764,19 @@ final class ProcessMonitor: ObservableObject {
 
     /// Throws the specific reason a process cannot be acted on right now.
     @discardableResult
-    private func requireActionable(_ process: ProcessSnapshot) throws -> ObservationToken {
+    private func requireActionable(
+        _ process: ProcessSnapshot,
+        for action: ProcessControlAction
+    ) throws -> ObservationToken {
         guard processes.contains(where: { $0.identity == process.identity }) else {
             throw ProcessControlError.processChanged
         }
         let state = actionability(of: process)
-        if state.isIgnored { throw ProcessControlError.processIgnored }
+        // Ignoring hides alerts; it must never keep a process frozen. Resume
+        // only restores a process, so it stays allowed for ignored rows.
+        if state.isIgnored, action != .resume { throw ProcessControlError.processIgnored }
         if state.isProtected { throw ProcessControlError.protectedProcess }
-        guard state.canAct, let observation = state.observation else {
+        guard state.freshness == .current, let observation = state.observation else {
             throw ProcessControlError.staleObservation
         }
         return observation
@@ -741,7 +789,7 @@ final class ProcessMonitor: ObservableObject {
         source: SuspensionRecord.Source
     ) async throws {
         guard !action.isDestructive else { throw ProcessControlError.authorizationInvalid }
-        let observation = try requireActionable(process)
+        let observation = try requireActionable(process, for: action)
         let nonce = try await authorization.mint(
             action: action,
             identity: process.identity,
@@ -764,7 +812,7 @@ final class ProcessMonitor: ObservableObject {
         mintedGeneration: UInt64,
         source: SuspensionRecord.Source = .manual
     ) async throws {
-        let observation = try requireActionable(process)
+        let observation = try requireActionable(process, for: action)
         // A sample landed between minting and consuming. Say so instead of
         // reporting a consumed approval.
         guard observation.generation == mintedGeneration else {
@@ -782,7 +830,23 @@ final class ProcessMonitor: ObservableObject {
         else {
             throw ProcessControlError.observationRefreshed
         }
-        try requireActionable(process)
+        try requireActionable(process, for: action)
+        if action == .suspend {
+            // Write ahead: a stop Watchdog cannot remember is one it could
+            // never offer to undo, so refuse rather than stop.
+            do {
+                try ledger.record(
+                    SuspensionRecord(
+                        identity: process.identity,
+                        executablePath: process.executablePath,
+                        suspendedAt: Date(),
+                        source: source
+                    )
+                )
+            } catch {
+                throw ProcessControlError.ledgerUnavailable(error.localizedDescription)
+            }
+        }
         do {
             try controller.execute(
                 authorized,
@@ -794,20 +858,18 @@ final class ProcessMonitor: ObservableObject {
             _ = try? ledger.remove(process.identity)
             reconcileLedger()
             throw ProcessControlError.partiallyApplied(delivered: delivered, failure: failure)
+        } catch {
+            if action == .suspend {
+                _ = try? ledger.remove(process.identity)
+                watchdogSuspended = ledger.all()
+            }
+            throw error
         }
 
         reflectLiveState(of: process.identity)
 
         switch action {
         case .suspend:
-            _ = try? ledger.record(
-                SuspensionRecord(
-                    identity: process.identity,
-                    executablePath: process.executablePath,
-                    suspendedAt: Date(),
-                    source: source
-                )
-            )
             recordActionOutcome(.suspended, for: process.identity)
         case .resume:
             _ = try? ledger.remove(process.identity)
@@ -867,8 +929,13 @@ final class ProcessMonitor: ObservableObject {
         else {
             return
         }
+        // The resolver answers from its cache every sample; the engine
+        // already carried the value forward, so an unchanged answer must not
+        // publish again or start another worktree lookup.
+        guard processes[index].workingDirectory != result.workingDirectory else { return }
         processes[index].workingDirectory = result.workingDirectory
         engine.recordWorkingDirectory(result.workingDirectory, for: result.identity)
+        guard isPresented else { return }
         let snapshot = processes[index]
         Task { [weak self] in
             await self?.resolveWorktreeStates(snapshots: [snapshot])

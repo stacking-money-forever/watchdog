@@ -15,6 +15,43 @@ final class LaunchAtLoginControllerTests: XCTestCase {
         XCTAssertFalse(controller.requiresApproval)
     }
 
+    func testFreshInstallReportingNotFoundRegistersOnce() {
+        // SMAppService.mainApp reports .notFound for an app Background Task
+        // Management has never seen; that is the real first-launch state.
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let service = FakeLaunchAtLoginService(status: .notFound)
+
+        let controller = LaunchAtLoginController(defaults: defaults, service: service)
+
+        XCTAssertEqual(service.registerCallCount, 1)
+        XCTAssertTrue(controller.isEnabled)
+        XCTAssertEqual(defaults.string(forKey: "launchAtLogin.lastStatus"), "enabled")
+    }
+
+    func testNotFoundAfterUserRemovedLoginItemDoesNotReregister() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "launchAtLogin.didAutoRegister")
+        let service = FakeLaunchAtLoginService(status: .notFound)
+
+        _ = LaunchAtLoginController(defaults: defaults, service: service)
+
+        XCTAssertEqual(service.registerCallCount, 0)
+        XCTAssertEqual(defaults.string(forKey: "launchAtLogin.lastStatus"), "notFound")
+    }
+
+    func testNotFoundWithOptOutDoesNotRegister() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "launchAtLogin.userOptedOut")
+        let service = FakeLaunchAtLoginService(status: .notFound)
+
+        _ = LaunchAtLoginController(defaults: defaults, service: service)
+
+        XCTAssertEqual(service.registerCallCount, 0)
+    }
+
     func testApprovalStateIsShownWithoutRepeatedRegistration() {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
