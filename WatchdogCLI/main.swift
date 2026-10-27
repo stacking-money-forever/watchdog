@@ -341,23 +341,39 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
     let ledger = SuspensionLedger.standard()
     let records = try ledger.reconcile()
     if arguments.flags.contains("--resume-all") {
+        struct ResumeResult: Encodable {
+            let token: String
+            let name: String
+            let result: String
+            let message: String
+        }
         var failures = 0
+        var results: [ResumeResult] = []
         let control = CLIControl(ledger: ledger)
         for record in records {
+            let token = IdentityToken(record.identity).description
             let result = try await control.run(.resume, target: .token(IdentityToken(record.identity)), force: true)
             switch result {
             case let .performed(report):
-                print("resume: \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)")
                 if report.outcome.isError { failures += 1 }
+                results.append(.init(token: token, name: report.name, result: report.outcome.isError ? "failed" : "resumed", message: report.outcome.localizedDescription))
+                if !arguments.json { print("resume: \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)") }
             case let .failed(error, _):
                 failures += 1
-                printError("실패: \(record.displayName) (\(IdentityToken(record.identity))): \(error.errorDescription ?? "\(error)")")
+                let message = error.errorDescription ?? "\(error)"
+                results.append(.init(token: token, name: record.displayName, result: "failed", message: message))
+                if !arguments.json { printError("실패: \(record.displayName) (\(token)): \(message)") }
             case let .decided(decision):
                 failures += 1
-                printError("건너뜀: \(record.displayName): \(decision)")
+                results.append(.init(token: token, name: record.displayName, result: "skipped", message: "\(decision)"))
+                if !arguments.json { printError("건너뜀: \(record.displayName): \(decision)") }
             }
         }
-        if records.isEmpty { print("Watchdog이 정지한 프로세스가 없습니다.") }
+        if arguments.json {
+            emitJSON(results)
+        } else if records.isEmpty {
+            print("Watchdog이 정지한 프로세스가 없습니다.")
+        }
         return failures == 0 ? CLIExitCode.success : CLIExitCode.failure
     }
     if arguments.json {
@@ -424,7 +440,13 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     // processes when explicitly asked.
     settings.autoSuspendEnabled = arguments.flags.contains("--auto-suspend")
     let interval = try arguments.double("--interval", default: 2, range: 0.5...60)
-    let maximumTicks = arguments.options["--count"].flatMap(Int.init)
+    var maximumTicks: Int?
+    if let text = arguments.options["--count"] {
+        guard let count = Int(text), count >= 1 else {
+            throw CLIUsageError("--count 값은 1 이상의 정수여야 합니다.")
+        }
+        maximumTicks = count
+    }
     let duration = try arguments.double("--duration", default: 0, range: 0...86_400)
 
     let stop = StopFlag()
@@ -462,12 +484,13 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     )
     let sampler = ProcessSampler()
     let control = CLIControl()
-    var engine = MonitorEngine()
+    var engine = MonitorEngine(continuityGap: .milliseconds(Int(max(5, interval * 2.5) * 1_000)))
     let clock = ContinuousClock()
     let started = clock.now
     var ticks = 0
     var previousHot: Set<ProcessIdentity> = []
     var previousHighMemory: Set<ProcessIdentity> = []
+    var autoSuspended: Set<ProcessIdentity> = []
     var failures = 0
 
     while !stop.isSet {
@@ -476,6 +499,21 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
         ticks += 1
         do {
             let sample = try await sampler.sample()
+            // A process this run stopped that is running again was resumed by
+            // the user (app, `fg`, `watchdog-cli resume`); like the app, do not
+            // stop it again.
+            let sampled = Dictionary(sample.processes.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
+            for identity in autoSuspended {
+                guard let process = sampled[identity] else {
+                    autoSuspended.remove(identity)
+                    continue
+                }
+                if !process.isSuspended {
+                    engine.recordUserResume(identity)
+                    autoSuspended.remove(identity)
+                    emit("resumed.by-user", process, "자동 정지 대상에서 제외")
+                }
+            }
             let update = engine.ingest(sample.processes, settings: settings, at: clock.now)
             let byIdentity = Dictionary(update.processes.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
             for identity in update.newlyHot {
@@ -499,6 +537,7 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             for candidate in update.autoSuspendCandidates {
                 switch try await control.run(.suspend, target: .token(IdentityToken(candidate.identity)), force: true) {
                 case let .performed(report):
+                    autoSuspended.insert(candidate.identity)
                     emit("auto-suspend", candidate, report.outcome.localizedDescription)
                 case let .failed(error, _):
                     emit("auto-suspend.failed", candidate, error.errorDescription)

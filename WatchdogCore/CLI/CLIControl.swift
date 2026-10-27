@@ -276,6 +276,10 @@ struct CLIControl: Sendable {
         }
 
         let authorization = ProcessActionAuthorizationActor()
+        // A process that was already stopped (Ctrl-Z, another tool) is not
+        // Watchdog's to resume later, so it gets no ledger record.
+        let recordsSuspension = action == .suspend && !live.isSuspended
+        var wroteAhead = false
         do {
             let nonce = try await authorization.mint(
                 action: action.controlAction,
@@ -290,8 +294,27 @@ struct CLIControl: Sendable {
                 currentGeneration: observation.generation,
                 at: clock.now
             )
+            if recordsSuspension {
+                // Write ahead: if the stop cannot be remembered, do not stop.
+                do {
+                    try ledger.record(
+                        SuspensionRecord(
+                            identity: live.identity,
+                            executablePath: live.executablePath,
+                            suspendedAt: Date(),
+                            source: .cli
+                        )
+                    )
+                } catch {
+                    throw ProcessControlError.ledgerUnavailable(error.localizedDescription)
+                }
+                wroteAhead = true
+            }
             try controller.execute(authorized, currentGeneration: observation.generation)
         } catch let error as ProcessControlError {
+            if wroteAhead {
+                _ = try? ledger.remove(live.identity)
+            }
             if case let .partiallyApplied(delivered, _) = error, delivered.contains(SIGCONT) {
                 _ = try? ledger.remove(live.identity)
             }
@@ -301,14 +324,6 @@ struct CLIControl: Sendable {
         let outcome: ProcessActionOutcome
         switch action {
         case .suspend:
-            _ = try? ledger.record(
-                SuspensionRecord(
-                    identity: live.identity,
-                    executablePath: live.executablePath,
-                    suspendedAt: Date(),
-                    source: .cli
-                )
-            )
             outcome = verifyState(live.identity, expectStopped: true) ? .suspended : .signalDelivered
         case .resume:
             _ = try? ledger.remove(live.identity)

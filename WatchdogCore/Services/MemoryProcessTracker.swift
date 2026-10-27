@@ -1,7 +1,11 @@
 import Foundation
 
 struct MemoryProcessTracker {
-    private var base = SustainedProcessTracker<UInt64>()
+    private var base: SustainedProcessTracker<UInt64>
+
+    init(continuityGap: Duration = .seconds(5)) {
+        base = SustainedProcessTracker(continuityGap: continuityGap)
+    }
 
     mutating func reset() {
         base.reset()

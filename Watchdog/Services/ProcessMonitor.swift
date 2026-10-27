@@ -573,6 +573,12 @@ final class ProcessMonitor: ObservableObject {
                 retained.append(record)
                 continue
             }
+            // The CLI writes its record just before sending SIGSTOP; a lookup
+            // in between still sees the process running.
+            if record.source == .cli, Date().timeIntervalSince(record.suspendedAt) < 5 {
+                retained.append(record)
+                continue
+            }
             _ = try? ledger.remove(record.identity)
             if case let .found(facts) = current, facts.identity == record.identity {
                 // Someone continued it outside this app (the CLI, a
@@ -825,6 +831,22 @@ final class ProcessMonitor: ObservableObject {
             throw ProcessControlError.observationRefreshed
         }
         try requireActionable(process, for: action)
+        if action == .suspend {
+            // Write ahead: a stop Watchdog cannot remember is one it could
+            // never offer to undo, so refuse rather than stop.
+            do {
+                try ledger.record(
+                    SuspensionRecord(
+                        identity: process.identity,
+                        executablePath: process.executablePath,
+                        suspendedAt: Date(),
+                        source: source
+                    )
+                )
+            } catch {
+                throw ProcessControlError.ledgerUnavailable(error.localizedDescription)
+            }
+        }
         do {
             try controller.execute(
                 authorized,
@@ -836,20 +858,18 @@ final class ProcessMonitor: ObservableObject {
             _ = try? ledger.remove(process.identity)
             reconcileLedger()
             throw ProcessControlError.partiallyApplied(delivered: delivered, failure: failure)
+        } catch {
+            if action == .suspend {
+                _ = try? ledger.remove(process.identity)
+                watchdogSuspended = ledger.all()
+            }
+            throw error
         }
 
         reflectLiveState(of: process.identity)
 
         switch action {
         case .suspend:
-            _ = try? ledger.record(
-                SuspensionRecord(
-                    identity: process.identity,
-                    executablePath: process.executablePath,
-                    suspendedAt: Date(),
-                    source: source
-                )
-            )
             recordActionOutcome(.suspended, for: process.identity)
         case .resume:
             _ = try? ledger.remove(process.identity)

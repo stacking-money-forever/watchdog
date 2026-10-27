@@ -155,10 +155,16 @@ final class SuspensionLedger: @unchecked Sendable {
             }
             defer { flock(descriptor, LOCK_UN) }
 
-            var records = Self.decode(fileURL)
+            var (records, damaged) = Self.decode(fileURL)
+            if damaged {
+                // Keep the unreadable original for inspection instead of
+                // silently overwriting it with whatever could be salvaged.
+                let aside = fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
+                try? FileManager.default.copyItem(at: fileURL, to: aside)
+            }
             let before = records
             try body(&records)
-            if records != before {
+            if records != before || damaged {
                 let encoder = JSONEncoder()
                 encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
                 encoder.dateEncodingStrategy = .iso8601
@@ -168,11 +174,25 @@ final class SuspensionLedger: @unchecked Sendable {
         }
     }
 
-    private static func decode(_ url: URL) -> [SuspensionRecord] {
-        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return [] }
+    /// Decodes record by record: one unreadable entry (or a source value
+    /// from a newer version) must not wipe every other stopped process.
+    /// `damaged` is true when anything had to be dropped.
+    private static func decode(_ url: URL) -> (records: [SuspensionRecord], damaged: Bool) {
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else { return ([], false) }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        // A corrupt file must not block control; start over rather than crash.
-        return (try? decoder.decode([SuspensionRecord].self, from: data)) ?? []
+        guard let entries = try? decoder.decode([LossyRecord].self, from: data) else {
+            return ([], true)
+        }
+        let records = entries.compactMap(\.record)
+        return (records, records.count != entries.count)
+    }
+
+    private struct LossyRecord: Decodable {
+        let record: SuspensionRecord?
+
+        init(from decoder: Decoder) throws {
+            record = try? SuspensionRecord(from: decoder)
+        }
     }
 }

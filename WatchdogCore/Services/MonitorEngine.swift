@@ -90,8 +90,17 @@ struct MonitorEngine: Sendable {
     /// decision instead of stopping the process again a window later.
     private(set) var userResumed: Set<ProcessIdentity> = []
 
-    private var hotTracker = HotProcessTracker()
-    private var memoryTracker = MemoryProcessTracker()
+    private var hotTracker: HotProcessTracker
+    private var memoryTracker: MemoryProcessTracker
+
+    /// `continuityGap` is the longest gap between samples that still counts
+    /// as continuous evidence. It must exceed the sampling interval, or a
+    /// slow sampler (e.g. `watch --interval 10`) resets every tick and never
+    /// alerts.
+    init(continuityGap: Duration = .seconds(5)) {
+        hotTracker = HotProcessTracker(continuityGap: continuityGap)
+        memoryTracker = MemoryProcessTracker(continuityGap: continuityGap)
+    }
     /// Evidence (unmasked) from the previous sample. Ignoring masks the output
     /// without discarding evidence, so undo restores a flag that survives the
     /// next sample.
