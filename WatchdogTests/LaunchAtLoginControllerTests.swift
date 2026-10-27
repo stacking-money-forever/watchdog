@@ -33,12 +33,55 @@ final class LaunchAtLoginControllerTests: XCTestCase {
         let (defaults, suiteName) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(true, forKey: "launchAtLogin.didAutoRegister")
+        defaults.set("0.2.5 (10)", forKey: "launchAtLogin.registeredBuild")
         let service = FakeLaunchAtLoginService(status: .notFound)
 
-        _ = LaunchAtLoginController(defaults: defaults, service: service)
+        _ = LaunchAtLoginController(defaults: defaults, service: service, currentBuild: "0.2.5 (10)")
 
         XCTAssertEqual(service.registerCallCount, 0)
         XCTAssertEqual(defaults.string(forKey: "launchAtLogin.lastStatus"), "notFound")
+    }
+
+    func testUpdateToANewBuildReregistersAfterNotFound() {
+        // An ad-hoc signed update has a new code identity, which Background
+        // Task Management reports as .notFound even though it was registered.
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        _ = LaunchAtLoginController(
+            defaults: defaults,
+            service: FakeLaunchAtLoginService(status: .notFound),
+            currentBuild: "0.2.4 (9)"
+        )
+
+        let updated = FakeLaunchAtLoginService(status: .notFound)
+        let controller = LaunchAtLoginController(defaults: defaults, service: updated, currentBuild: "0.2.5 (10)")
+
+        XCTAssertEqual(updated.registerCallCount, 1)
+        XCTAssertTrue(controller.isEnabled)
+    }
+
+    func testUpdateFromBuildWithoutRecordReregisters() {
+        // 0.2.4 set didAutoRegister but did not record the build.
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "launchAtLogin.didAutoRegister")
+        let service = FakeLaunchAtLoginService(status: .notFound)
+
+        _ = LaunchAtLoginController(defaults: defaults, service: service, currentBuild: "0.2.5 (10)")
+
+        XCTAssertEqual(service.registerCallCount, 1)
+    }
+
+    func testUpdateDoesNotOverrideOptOut() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "launchAtLogin.didAutoRegister")
+        defaults.set(true, forKey: "launchAtLogin.userOptedOut")
+        let service = FakeLaunchAtLoginService(status: .notFound)
+
+        _ = LaunchAtLoginController(defaults: defaults, service: service, currentBuild: "0.2.5 (10)")
+
+        XCTAssertEqual(service.registerCallCount, 0)
     }
 
     func testNotFoundWithOptOutDoesNotRegister() {
