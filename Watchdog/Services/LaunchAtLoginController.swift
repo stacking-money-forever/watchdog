@@ -47,6 +47,7 @@ final class LaunchAtLoginController: ObservableObject {
 
     private let defaults: UserDefaults
     private let service: any LaunchAtLoginServicing
+    private let currentBuild: String
 
     private enum Keys {
         static let userOptedOut = "launchAtLogin.userOptedOut"
@@ -58,6 +59,10 @@ final class LaunchAtLoginController: ObservableObject {
         /// `watchdog-cli doctor` can explain a missing login item.
         static let lastStatus = "launchAtLogin.lastStatus"
         static let lastError = "launchAtLogin.lastError"
+        /// The build that was registered. The beta is ad-hoc signed, so every
+        /// update has a new code identity that Background Task Management
+        /// reports as `.notFound`; that is not the user removing the item.
+        static let registeredBuild = "launchAtLogin.registeredBuild"
     }
 
     private static let log = Logger(subsystem: "dev.justn.watchdog", category: "login-item")
@@ -65,10 +70,12 @@ final class LaunchAtLoginController: ObservableObject {
     init(
         defaults: UserDefaults = .standard,
         service: any LaunchAtLoginServicing = SystemLaunchAtLoginService(),
-        automaticallyRegister: Bool = true
+        automaticallyRegister: Bool = true,
+        currentBuild: String = LaunchAtLoginController.bundleBuild
     ) {
         self.defaults = defaults
         self.service = service
+        self.currentBuild = currentBuild
         refresh()
         if automaticallyRegister {
             registerByDefaultIfNeeded()
@@ -111,13 +118,16 @@ final class LaunchAtLoginController: ObservableObject {
         let status = service.status
         if status == .enabled || status == .requiresApproval {
             defaults.set(true, forKey: Keys.didAutoRegister)
+            defaults.set(currentBuild, forKey: Keys.registeredBuild)
         }
+        let updatedSinceRegistration = status == .notFound
+            && defaults.string(forKey: Keys.registeredBuild) != currentBuild
         // A main app that has never been registered reports `.notFound`, not
         // `.notRegistered`: Background Task Management has no record of it
         // yet. Accepting only `.notRegistered` silently skipped every fresh
         // install. `.unknown` stays excluded.
         guard !defaults.bool(forKey: Keys.userOptedOut),
-              !defaults.bool(forKey: Keys.didAutoRegister),
+              !defaults.bool(forKey: Keys.didAutoRegister) || updatedSinceRegistration,
               status == .notRegistered || status == .notFound
         else {
             Self.log.info("auto-register skipped: status=\(status.diagnosticName, privacy: .public) optedOut=\(self.defaults.bool(forKey: Keys.userOptedOut)) done=\(self.defaults.bool(forKey: Keys.didAutoRegister))")
@@ -127,6 +137,7 @@ final class LaunchAtLoginController: ObservableObject {
         do {
             try service.register()
             defaults.set(true, forKey: Keys.didAutoRegister)
+            defaults.set(currentBuild, forKey: Keys.registeredBuild)
             recordError(nil)
             Self.log.info("auto-registered as login item (was \(status.diagnosticName, privacy: .public))")
         } catch {
@@ -134,6 +145,13 @@ final class LaunchAtLoginController: ObservableObject {
             Self.log.error("auto-register failed: \(String(describing: error), privacy: .public)")
         }
         refresh()
+    }
+
+    nonisolated static var bundleBuild: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "?"
+        let build = info["CFBundleVersion"] as? String ?? "?"
+        return "\(version) (\(build))"
     }
 
     private func recordError(_ error: Error?) {
