@@ -141,6 +141,18 @@ struct MonitorEngine: Sendable {
                 snapshots[index].worktreeState = carried.worktreeState
             }
         }
+        // Classification ran before enrichment; give descendants their
+        // agent's (carried) working directory so they show its project.
+        let agentDirectories = Dictionary(
+            snapshots.lazy.filter { $0.kind == .agent }.map { ($0.id, $0.workingDirectory) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for index in snapshots.indices {
+            guard let pid = snapshots[index].agentAncestor?.pid,
+                  let directory = agentDirectories[pid] ?? nil
+            else { continue }
+            snapshots[index].agentAncestor?.workingDirectory = directory
+        }
 
         rawHot = hotTracker.update(
             snapshots: snapshots,

@@ -67,6 +67,50 @@ final class OrphanClassifierTests: XCTestCase {
         XCTAssertEqual(OrphanClassifier.classify([first, duplicate]).count, 2)
     }
 
+    func testProcessStartedByAgentIsAttributedToIt() throws {
+        let herdr = snapshot(pid: 100, parent: 1, name: "/opt/homebrew/opt/herdr/bin/herdr")
+        let agent = snapshot(pid: 101, parent: 100, name: "claude", tty: "ttys001")
+        let shell = snapshot(pid: 102, parent: 101, name: "/bin/zsh", tty: "ttys001")
+        let test = snapshot(pid: 103, parent: 102, name: "node", tty: "ttys001")
+
+        let result = try classified(test.id, in: [herdr, agent, shell, test])
+
+        XCTAssertEqual(result.agentAncestor, AgentAncestor(pid: 101, name: "claude", workingDirectory: nil))
+        XCTAssertNil(try classified(herdr.id, in: [herdr, agent, shell, test]).agentAncestor)
+        XCTAssertNil(try classified(agent.id, in: [herdr, agent, shell, test]).agentAncestor)
+    }
+
+    func testAttributionStopsAtSessionHost() throws {
+        let agent = snapshot(pid: 100, parent: 1, name: "claude")
+        let terminal = snapshot(pid: 101, parent: 100, name: "/Applications/Ghostty.app/Contents/MacOS/ghostty")
+        let shell = snapshot(pid: 102, parent: 101, name: "/bin/zsh")
+
+        XCTAssertNil(try classified(shell.id, in: [agent, terminal, shell]).agentAncestor)
+    }
+
+    func testSubagentOfLiveAgentIsNotOrphan() throws {
+        let parent = snapshot(pid: 100, parent: 1, name: "claude")
+        let shell = snapshot(pid: 101, parent: 100, name: "/bin/zsh")
+        let subagent = snapshot(pid: 102, parent: 101, name: "/Users/test/.local/bin/omp")
+
+        let result = try classified(subagent.id, in: [parent, shell, subagent])
+
+        XCTAssertEqual(result.kind, .agent)
+        XCTAssertNil(result.orphanReason)
+    }
+
+    func testAgentRunByHeadlessSupervisorOrDesktopHostIsNotOrphan() throws {
+        for host in [
+            "/Users/test/.local/bin/brgr",
+            "/Applications/Codex.app/Contents/MacOS/Codex",
+            "/Applications/cmux.app/Contents/MacOS/cmux",
+        ] {
+            let supervisor = snapshot(pid: 100, parent: 1, name: host)
+            let agent = snapshot(pid: 101, parent: 100, name: "codex")
+            XCTAssertNil(try classified(agent.id, in: [supervisor, agent]).orphanReason, host)
+        }
+    }
+
     private func classified(_ pid: Int32, in snapshots: [ProcessSnapshot]) throws -> ProcessSnapshot {
         try XCTUnwrap(OrphanClassifier.classify(snapshots).first { $0.id == pid })
     }

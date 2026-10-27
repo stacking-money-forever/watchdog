@@ -342,7 +342,9 @@ final class ProcessMonitor: ObservableObject {
             filtered = scoped.filter {
                 $0.displayName.lowercased().contains(query)
                     || $0.executablePath.lowercased().contains(query)
+                    || ($0.launchScript?.lowercased().contains(query) ?? false)
                     || ($0.workingDirectory?.lowercased().contains(query) ?? false)
+                    || ($0.agentAncestor?.name.contains(query) ?? false)
                     || String($0.id).contains(query)
             }
         }
