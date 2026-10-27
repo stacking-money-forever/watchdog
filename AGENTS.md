@@ -3,12 +3,12 @@
 ## Installation and release contract
 
 - Read `INSTALL.md` before installing, updating, removing, packaging, or validating Watchdog. It is the canonical human-and-agent installation guide.
-- The current official release is `v0.2.5` from `https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.5`.
+- The current official release is `v0.2.6` from `https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.6`.
 - For an ordinary agent install from this checkout, run `./scripts/install.sh`. It installs into `~/Applications` by default, verifies the pinned SHA-256 and code signature, and requests a graceful `SIGTERM` only for the exact installed Watchdog process during an update.
 - Never use `sudo`, automatic `SIGKILL`, global Gatekeeper disabling, `xattr` quarantine removal, unsigned mirrors, or unverified release files as installation shortcuts.
 - Do not silently change the release tag, download URL, or checksum in only one place. Keep `INSTALL.md`, `README.md`, `scripts/install.sh`, and GitHub release assets synchronized.
 - For a non-launching automation install, use `./scripts/install.sh --no-launch`. Only use `--install-dir /Applications` when the caller already has write access; never invent privilege escalation.
-- Verify an installed app with `codesign --verify --deep --strict --verbose=2`, bundle identifier `dev.justn.watchdog`, version output, launch, and exact process presence. Never claim Gatekeeper-ready status: the official `v0.2.5` artifact passes the structural codesign check but is ad-hoc signed with no Team ID, is not notarized or stapled, and `spctl` assessment rejects it.
+- Verify an installed app with `codesign --verify --deep --strict --verbose=2`, bundle identifier `dev.justn.watchdog`, version output, launch, and exact process presence. Never claim Gatekeeper-ready status: the official `v0.2.6` artifact passes the structural codesign check but is ad-hoc signed with no Team ID, is not notarized or stapled, and `spctl` assessment rejects it.
 - The project intentionally follows a no-paid-Apple-distribution policy. Public releases remain clearly labeled unnotarized betas unless that policy explicitly changes; Developer ID notarization is not a release blocker.
 - The public beta is ad-hoc signed and relies on Apple’s per-app approval flow: Finder **Open**, or System Settings → Privacy & Security → **Open Anyway**.
 
