@@ -57,6 +57,12 @@ struct WatchdogMenuView: View {
     @State private var pendingAction: PendingProcessAction?
     @State private var menuActionFeedback: MenuActionFeedback?
     @State private var localActionFailures: [ProcessIdentity: LocalActionFailure] = [:]
+    /// A closed MenuBarExtra window keeps its view graph, and SwiftUI kept
+    /// rebuilding every row on each sample while nobody could see it; the
+    /// footprint grew without bound after the panel had been opened once.
+    /// Rendering nothing while closed lets the graph go idle; @State above
+    /// (a pending confirmation included) is kept.
+    @State private var isShown = false
 
     init(monitor: ProcessMonitor, launchAtLogin: LaunchAtLoginController) {
         self.monitor = monitor
@@ -69,19 +75,23 @@ struct WatchdogMenuView: View {
 
     var body: some View {
         ZStack {
-            VStack(spacing: 0) {
-                header
-                Divider()
-                controls
-                processList
-                Divider()
-                footer
-            }
-            .disabled(pendingAction != nil)
-            .accessibilityHidden(pendingAction != nil)
+            if isShown {
+                VStack(spacing: 0) {
+                    header
+                    Divider()
+                    controls
+                    processList
+                    Divider()
+                    footer
+                }
+                .disabled(pendingAction != nil)
+                .accessibilityHidden(pendingAction != nil)
 
-            if let pendingAction {
-                destructiveConfirmation(for: pendingAction)
+                if let pendingAction {
+                    destructiveConfirmation(for: pendingAction)
+                }
+            } else {
+                Color.clear
             }
         }
         // A pending confirmation must survive the popup closing (focus loss);
@@ -90,11 +100,13 @@ struct WatchdogMenuView: View {
             dismissConfirmationIfInvalid()
         }
         .onAppear {
+            isShown = true
             monitor.isPresented = true
             monitor.refreshNotificationAuthorization()
             launchAtLogin.refresh()
         }
         .onDisappear {
+            isShown = false
             monitor.isPresented = false
         }
     }
