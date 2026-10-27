@@ -171,7 +171,10 @@ struct ProcessRow: View {
     }
 
     private var metadata: String {
-        let identity = process.projectName.map { "\($0) · #\(process.id)" } ?? "PID \(process.id)"
+        var identity = process.projectName.map { "\($0) · #\(process.id)" } ?? "PID \(process.id)"
+        if let ancestor = process.agentAncestor {
+            identity = "\(ancestor.name)에서 실행 · " + identity
+        }
         let elapsedParts = process.elapsed.split(separator: ":")
         let compactElapsed = elapsedParts.count >= 3
             ? elapsedParts.dropLast().joined(separator: ":")

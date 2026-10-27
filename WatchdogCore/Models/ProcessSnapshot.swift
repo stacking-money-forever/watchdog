@@ -90,6 +90,12 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
     var workingDirectory: String?
     var worktreeState: WorktreeState?
     var orphanReason: OrphanReason? = nil
+    /// For an interpreter process (`node`, `python3`), the script or module
+    /// it runs; that is where an npm/pip-installed agent shows its name.
+    var launchScript: String? = nil
+    /// The nearest coding agent this process descends from, when it is not
+    /// an agent itself: a build, test run, or MCP server the agent started.
+    var agentAncestor: AgentAncestor? = nil
 
     var identity: ProcessIdentity {
         ProcessIdentity(
@@ -112,14 +118,35 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
             return "Chrome 도우미"
         }
 
+        if let appName = rendererAppName {
+            return "\(appName) 렌더러"
+        }
+
+        if let agentName {
+            return agentName
+        }
+
         let name = URL(fileURLWithPath: executablePath).lastPathComponent
         return name.isEmpty ? executablePath : name
+    }
+
+    /// The coding agent this process is, if any.
+    var agentName: String? {
+        AgentCatalog.agentName(command: executablePath, launchScript: launchScript)
+    }
+
+    /// `Aside Helper (Renderer)` → `Aside`: a Chromium/Electron renderer.
+    private var rendererAppName: String? {
+        let name = URL(fileURLWithPath: executablePath).lastPathComponent
+        guard let range = name.range(of: " Helper (Renderer)") else { return nil }
+        let appName = String(name[..<range.lowerBound])
+        return appName.isEmpty ? nil : appName
     }
 
     var kind: ProcessKind {
         let lowercasePath = executablePath.lowercased()
 
-        if executablePath.contains("Google Chrome Helper (Renderer)") {
+        if executablePath.contains("Helper (Renderer)") {
             return .browserRenderer
         }
 
@@ -127,19 +154,21 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
             return .system
         }
 
-        if lowercasePath.contains(".app/contents/") {
-            return .application
+        if agentName != nil {
+            return .agent
         }
 
-        if Self.agentNames.contains(displayName.lowercased()) {
-            return .agent
+        if lowercasePath.contains(".app/contents/") {
+            return .application
         }
 
         return .other
     }
 
+    /// The project folder name: the process's own working directory, or for
+    /// a process an agent started, that agent's.
     var projectName: String? {
-        guard let workingDirectory,
+        guard let workingDirectory = workingDirectory ?? agentAncestor?.workingDirectory,
               !workingDirectory.isEmpty,
               workingDirectory != "/"
         else {
@@ -169,13 +198,10 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
     var canControl: Bool {
         !isProtected
     }
+}
 
-    private static let agentNames: Set<String> = [
-        "claude",
-        "codex",
-        "cursor-agent",
-        "gjc",
-        "opencode",
-        "pi",
-    ]
+struct AgentAncestor: Equatable, Sendable {
+    let pid: Int32
+    let name: String
+    var workingDirectory: String?
 }

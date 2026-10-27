@@ -163,6 +163,27 @@ check "stopped --resume-all" expect_exit 0 "$cli" stopped --resume-all
 check "burner runs again" wait_until running "$burner"
 check "ledger empty after resume-all" test "$(ledger_count)" = 0
 
+echo "Agent recognition through an interpreter"
+# npm/pip agents run as `node …/gemini.js` or `python3 …/aider`; the agent is
+# only visible in the script argument. The fake agent also starts a child,
+# which must be attributed to it.
+printf 'import subprocess\nsubprocess.run(["sleep", "30"])\n' >"$work/bin/gemini.py"
+/usr/bin/python3 "$work/bin/gemini.py" &
+interpreted=$!
+spawned+=("$interpreted")
+wait_until pgrep -P "$interpreted" sleep >/dev/null
+child=$(pgrep -P "$interpreted" sleep | head -1)
+spawned+=("$child")
+agent_json=$("$cli" list --scope agents --search gemini.py --json --interval 0.2)
+check "python-launched agent is an agent named gemini" /usr/bin/python3 -c \
+  'import json,sys; r=[p for p in json.loads(sys.argv[1]) if p["pid"]==int(sys.argv[2])]; sys.exit(not (r and r[0]["name"]=="gemini" and r[0]["kind"]=="agent"))' \
+  "$agent_json" "$interpreted"
+child_json=$("$cli" inspect "$child" --json)
+check "its child is attributed to it" /usr/bin/python3 -c \
+  'import json,sys; sys.exit(json.loads(sys.argv[1]).get("agentAncestorPID")!=int(sys.argv[2]))' \
+  "$child_json" "$interpreted"
+kill -TERM "$child" "$interpreted" 2>/dev/null || true
+
 echo
 echo "cli-e2e: $pass passed, $fail failed (work dir $work)"
 [[ "$fail" -eq 0 ]]

@@ -338,9 +338,17 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
         let isPrimaryInstance: Bool
         if case .heldByAnotherInstance = lock { isPrimaryInstance = false } else { isPrimaryInstance = true }
         let monitor: ProcessMonitor
+        // Login-item diagnostics go to the user's real defaults only from the
+        // shipping instance; a test host or fixture lives at another path and
+        // would overwrite them with its own (unregistered) status.
+        let loginDefaults: UserDefaults
         switch mode {
         case .normal:
             monitor = ProcessMonitor(ledger: .standard())
+            // Launch smoke runs this path from a build directory.
+            loginDefaults = ProcessInfo.processInfo.environment["WATCHDOG_DISABLE_LOGIN_ITEM"] == "1"
+                ? UserDefaults(suiteName: "dev.justn.watchdog.isolated") ?? .standard
+                : .standard
         default:
             // Tests and fixtures never read or write the user's real defaults
             // or suspension ledger, and never prompt for notification access.
@@ -348,6 +356,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
             let defaults = UserDefaults(suiteName: suite) ?? .standard
             defaults.removePersistentDomain(forName: suite)
             defaults.set(false, forKey: MonitorSettings.Keys.notificationsEnabled)
+            loginDefaults = defaults
             #if DEBUG
             if ProcessInfo.processInfo.arguments.contains(WatchdogUITestFixture.reorder) {
                 monitor = ProcessMonitor(
@@ -360,7 +369,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
             #endif
             monitor = ProcessMonitor(defaults: defaults, ledger: .inMemory())
         }
-        let launchAtLogin = LaunchAtLoginController(automaticallyRegister: false)
+        let launchAtLogin = LaunchAtLoginController(defaults: loginDefaults, automaticallyRegister: false)
         var shouldShowFixtureWindow = false
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments

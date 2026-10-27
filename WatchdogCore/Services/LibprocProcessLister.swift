@@ -41,7 +41,7 @@ final class CommandNameCache: @unchecked Sendable {
     }
 
     private struct Entry {
-        let name: String?
+        let command: LaunchCommand?
         let storedAt: ContinuousClock.Instant
     }
 
@@ -58,21 +58,21 @@ final class CommandNameCache: @unchecked Sendable {
         self.now = now
     }
 
-    fileprivate func name(
+    fileprivate func command(
         pid: Int32,
         startMicroseconds: UInt64,
         shortName: String,
-        read: () -> String?
-    ) -> String? {
+        read: () -> LaunchCommand?
+    ) -> LaunchCommand? {
         let key = Key(pid: pid, startMicroseconds: startMicroseconds, shortName: shortName)
         let instant = now()
         if let entry = lock.withLock({ entries[key] }),
            entry.storedAt.duration(to: instant) < maximumAge {
-            return entry.name
+            return entry.command
         }
-        let name = read()
-        lock.withLock { entries[key] = Entry(name: name, storedAt: instant) }
-        return name
+        let command = read()
+        lock.withLock { entries[key] = Entry(command: command, storedAt: instant) }
+        return command
     }
 
     /// Drops entries for processes that are no longer listed.
@@ -169,19 +169,19 @@ enum LibprocProcessLister {
         let shortName = withUnsafeBytes(of: &info.kp_proc.p_comm) { cString(from: $0) }
         // argv[0] is only readable for this user's processes; skip the
         // syscall for everyone else.
-        let commandName: String?
+        let command: LaunchCommand?
         if userID == currentUserID {
             if let cache {
-                commandName = cache.name(pid: pid, startMicroseconds: startMicroseconds, shortName: shortName) {
-                    arguments.commandName(pid: pid)
+                command = cache.command(pid: pid, startMicroseconds: startMicroseconds, shortName: shortName) {
+                    arguments.command(pid: pid)
                 }
             } else {
-                commandName = arguments.commandName(pid: pid)
+                command = arguments.command(pid: pid)
             }
         } else {
-            commandName = nil
+            command = nil
         }
-        let snapshot = ProcessSnapshot(
+        var snapshot = ProcessSnapshot(
             id: pid,
             parentPID: info.kp_eproc.e_ppid,
             processGroupID: info.kp_eproc.e_pgid,
@@ -189,15 +189,19 @@ enum LibprocProcessLister {
             tty: ttyName(info.kp_eproc.e_tdev),
             cpuPercent: 0,
             residentBytes: hasTaskInfo ? taskInfo.pti_resident_size : 0,
-            state: stateLetter(UInt32(info.kp_proc.p_stat)),
+            state: stateLetter(
+                UInt32(info.kp_proc.p_stat),
+                runningThreads: hasTaskInfo ? taskInfo.pti_numrunning : nil
+            ),
             elapsed: elapsedText(startSeconds: startSeconds, now: now),
             // Same order as `ps comm`: argv[0] when readable (own processes),
             // otherwise the executable path, otherwise the kernel's short name.
-            executablePath: commandName
+            executablePath: command?.name
                 ?? executablePath(pid: pid)
                 ?? shortName,
             startTimeMicroseconds: startMicroseconds
         )
+        snapshot.launchScript = command?.script
         return RawProcessRow(
             snapshot: snapshot,
             totalCPUTimeNanoseconds: hasTaskInfo
@@ -206,10 +210,13 @@ enum LibprocProcessLister {
         )
     }
 
-    static func stateLetter(_ status: UInt32) -> String {
+    /// The kernel reports `SRUN` for every live process that is not stopped,
+    /// sleeping ones included. Like `ps`, call it sleeping (`S`) when none of
+    /// its threads is running; unreadable thread counts keep `R`.
+    static func stateLetter(_ status: UInt32, runningThreads: Int32? = nil) -> String {
         switch Int32(status) {
         case SIDL: return "I"
-        case SRUN: return "R"
+        case SRUN: return runningThreads == 0 ? "S" : "R"
         case SSLEEP: return "S"
         case SSTOP: return "T"
         case SZOMB: return "Z"
@@ -276,12 +283,23 @@ private final class TTYNameCache: @unchecked Sendable {
     }
 }
 
-/// Reads argv[0] through `KERN_PROCARGS2`, reusing one buffer across a whole
+/// What a process was launched as: argv[0], plus the script an interpreter
+/// runs (`node …/gemini.js`), which is where npm-installed agents show.
+struct LaunchCommand: Sendable, Equatable {
+    let name: String
+    let script: String?
+}
+
+/// Reads argv through `KERN_PROCARGS2`, reusing one buffer across a whole
 /// enumeration. Fails (returns nil) for processes the caller may not inspect.
-private struct ArgumentReader {
+struct ArgumentReader {
     private var buffer: [UInt8] = []
 
-    mutating func commandName(pid: Int32) -> String? {
+    /// Interpreter arguments read to find the script; enough for option
+    /// prefixes like `node --use-system-ca --max-old-space-size=4096 x.js`.
+    private static let maximumScriptSearch = 8
+
+    mutating func command(pid: Int32) -> LaunchCommand? {
         if buffer.isEmpty {
             var argumentMax: Int32 = 0
             var size = MemoryLayout<Int32>.size
@@ -299,17 +317,29 @@ private struct ArgumentReader {
         }
         guard result == 0, size > MemoryLayout<Int32>.size else { return nil }
 
-        // Layout: argc (Int32), exec path, NUL padding, argv[0], …
-        return buffer.withUnsafeBytes { raw -> String? in
-            let bytes = UnsafeRawBufferPointer(rebasing: raw[0..<size])
-            var index = MemoryLayout<Int32>.size
-            while index < bytes.count, bytes[index] != 0 { index += 1 }
-            while index < bytes.count, bytes[index] == 0 { index += 1 }
-            guard index < bytes.count else { return nil }
-            let name = LibprocProcessLister.cString(
-                from: UnsafeRawBufferPointer(rebasing: bytes[index..<bytes.count])
-            )
-            return name.isEmpty ? nil : name
+        return buffer.withUnsafeBytes { raw -> LaunchCommand? in
+            Self.parse(UnsafeRawBufferPointer(rebasing: raw[0..<size]))
         }
+    }
+
+    /// Layout: argc (Int32), exec path, NUL padding, argv[0], argv[1], …
+    static func parse(_ bytes: UnsafeRawBufferPointer) -> LaunchCommand? {
+        guard bytes.count > MemoryLayout<Int32>.size else { return nil }
+        let argc = Int(bytes.loadUnaligned(as: Int32.self))
+        var index = MemoryLayout<Int32>.size
+        while index < bytes.count, bytes[index] != 0 { index += 1 }
+        while index < bytes.count, bytes[index] == 0 { index += 1 }
+
+        var arguments: [String] = []
+        while index < bytes.count, arguments.count < min(argc, maximumScriptSearch + 1) {
+            let end = bytes[index...].firstIndex(of: 0) ?? bytes.endIndex
+            arguments.append(String(decoding: bytes[index..<end], as: UTF8.self))
+            index = end + 1
+        }
+        guard let name = arguments.first, !name.isEmpty else { return nil }
+        let script = AgentCatalog.isInterpreter(name)
+            ? AgentCatalog.launchScript(arguments: Array(arguments.dropFirst()))
+            : nil
+        return LaunchCommand(name: name, script: script)
     }
 }

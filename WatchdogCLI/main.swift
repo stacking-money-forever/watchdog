@@ -124,6 +124,9 @@ struct ProcessRecord: Encodable {
     let tty: String
     let elapsed: String
     let orphanReason: String?
+    let launchScript: String?
+    let agentAncestorPID: Int32?
+    let agentAncestorName: String?
     let workingDirectory: String?
     let worktree: String?
     let controllable: Bool
@@ -145,6 +148,9 @@ struct ProcessRecord: Encodable {
         tty = process.tty
         elapsed = process.elapsed
         orphanReason = process.orphanReason?.rawValue
+        launchScript = process.launchScript
+        agentAncestorPID = process.agentAncestor?.pid
+        agentAncestorName = process.agentAncestor?.name
         workingDirectory = process.workingDirectory
         worktree = process.worktreeState.map { state in
             [state.verdict.localizedDescription, state.detail].compactMap { $0 }.joined(separator: " · ")
@@ -185,6 +191,7 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
         if process.cpuPercent >= settings.cpuThreshold { flags.append("cpu") }
         if process.residentBytes >= settings.memoryThresholdBytes { flags.append("memory") }
         if process.suspectedOrphan { flags.append("orphan") }
+        if let ancestor = process.agentAncestor { flags.append("via:\(ancestor.name)#\(ancestor.pid)") }
         if stopped.contains(process.identity) { flags.append("stopped-by-watchdog") }
         if process.isProtected { flags.append("protected") }
         return flags
@@ -207,11 +214,23 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
         processes = processes.filter {
             $0.displayName.lowercased().contains(search)
                 || $0.executablePath.lowercased().contains(search)
+                || ($0.launchScript?.lowercased().contains(search) ?? false)
                 || String($0.id) == search
         }
     }
-    for index in processes.indices where processes[index].kind == .agent {
-        processes[index].workingDirectory = WorkingDirectoryResolver.currentDirectory(pid: processes[index].id)
+    var agentDirectories: [Int32: String?] = [:]
+    func agentDirectory(_ pid: Int32) -> String? {
+        if let cached = agentDirectories[pid] { return cached }
+        let directory = WorkingDirectoryResolver.currentDirectory(pid: pid)
+        agentDirectories[pid] = directory
+        return directory
+    }
+    for index in processes.indices {
+        if processes[index].kind == .agent {
+            processes[index].workingDirectory = agentDirectory(processes[index].id)
+        } else if let pid = processes[index].agentAncestor?.pid {
+            processes[index].agentAncestor?.workingDirectory = agentDirectory(pid)
+        }
     }
 
     if arguments.json {
@@ -272,6 +291,7 @@ func runInspect(_ arguments: Arguments) async throws -> Int32 {
         ("TOKEN", IdentityToken(process.identity).description),
         ("이름", process.displayName),
         ("경로(argv0)", process.executablePath),
+        ("실행 스크립트", process.launchScript ?? "-"),
         ("종류", process.kind.rawValue),
         ("PID / PPID / PGID", "\(process.id) / \(process.parentPID) / \(process.processGroupID)"),
         ("UID", "\(process.userID)"),
@@ -281,6 +301,7 @@ func runInspect(_ arguments: Arguments) async throws -> Int32 {
         ("CPU", String(format: "%.1f%%", process.cpuPercent)),
         ("메모리", memoryText(process.residentBytes)),
         ("고아 의심", process.orphanReason?.localizedDescription ?? "아님"),
+        ("시작한 에이전트", process.agentAncestor.map { "\($0.name) (PID \($0.pid))" } ?? "-"),
         ("작업 디렉터리", process.workingDirectory ?? "확인 불가"),
         ("워크트리", process.worktreeState.map { [$0.verdict.localizedDescription, $0.detail].compactMap { $0 }.joined(separator: " · ") } ?? "-"),
         ("Watchdog이 정지함", ledgerStopped ? "예" : "아니오"),
