@@ -397,7 +397,7 @@ final class ProcessMonitor: ObservableObject {
         for process: ProcessSnapshot
     ) throws -> DestructiveActionConfirmationRequest {
         guard action.isDestructive else { throw ProcessControlError.authorizationInvalid }
-        try requireActionable(process)
+        try requireActionable(process, for: action)
         let requestedAt = clock.now
         pendingConfirmations = pendingConfirmations.filter {
             requestedAt < $0.value.advanced(by: Self.confirmationValidity)
@@ -429,7 +429,7 @@ final class ProcessMonitor: ObservableObject {
         guard let process = processes.first(where: { $0.identity == request.identity }) else {
             throw ProcessControlError.processChanged
         }
-        let observation = try requireActionable(process)
+        let observation = try requireActionable(process, for: request.action)
         let nonce = try await authorization.mint(
             action: request.action,
             identity: request.identity,
@@ -534,14 +534,27 @@ final class ProcessMonitor: ObservableObject {
         for record in records {
             if let process = live[record.identity], process.isSuspended {
                 retained.append(record)
-            } else {
-                _ = try? ledger.remove(record.identity)
-                if live[record.identity] != nil {
-                    // Someone continued it outside this app (the CLI, a
-                    // terminal `fg`, `kill -CONT`): treat that as the user's
-                    // decision so auto-suspend does not stop it again.
-                    engine.recordUserResume(record.identity)
-                }
+                continue
+            }
+            // The sample was taken off the main actor and may predate a
+            // suspend that finished while it ran (here or from the CLI).
+            // Trusting it would drop a fresh record and leave the process
+            // frozen but forgotten, so confirm with a live lookup first.
+            let current = controller.lookup(pid: record.identity.pid)
+            if case let .found(facts) = current, facts.identity == record.identity, facts.isSuspended {
+                retained.append(record)
+                continue
+            }
+            if case .failed = current {
+                retained.append(record)
+                continue
+            }
+            _ = try? ledger.remove(record.identity)
+            if case let .found(facts) = current, facts.identity == record.identity {
+                // Someone continued it outside this app (the CLI, a
+                // terminal `fg`, `kill -CONT`): treat that as the user's
+                // decision so auto-suspend does not stop it again.
+                engine.recordUserResume(record.identity)
             }
         }
         if retained != watchdogSuspended { watchdogSuspended = retained }
@@ -721,14 +734,19 @@ final class ProcessMonitor: ObservableObject {
 
     /// Throws the specific reason a process cannot be acted on right now.
     @discardableResult
-    private func requireActionable(_ process: ProcessSnapshot) throws -> ObservationToken {
+    private func requireActionable(
+        _ process: ProcessSnapshot,
+        for action: ProcessControlAction
+    ) throws -> ObservationToken {
         guard processes.contains(where: { $0.identity == process.identity }) else {
             throw ProcessControlError.processChanged
         }
         let state = actionability(of: process)
-        if state.isIgnored { throw ProcessControlError.processIgnored }
+        // Ignoring hides alerts; it must never keep a process frozen. Resume
+        // only restores a process, so it stays allowed for ignored rows.
+        if state.isIgnored, action != .resume { throw ProcessControlError.processIgnored }
         if state.isProtected { throw ProcessControlError.protectedProcess }
-        guard state.canAct, let observation = state.observation else {
+        guard state.freshness == .current, let observation = state.observation else {
             throw ProcessControlError.staleObservation
         }
         return observation
@@ -741,7 +759,7 @@ final class ProcessMonitor: ObservableObject {
         source: SuspensionRecord.Source
     ) async throws {
         guard !action.isDestructive else { throw ProcessControlError.authorizationInvalid }
-        let observation = try requireActionable(process)
+        let observation = try requireActionable(process, for: action)
         let nonce = try await authorization.mint(
             action: action,
             identity: process.identity,
@@ -764,7 +782,7 @@ final class ProcessMonitor: ObservableObject {
         mintedGeneration: UInt64,
         source: SuspensionRecord.Source = .manual
     ) async throws {
-        let observation = try requireActionable(process)
+        let observation = try requireActionable(process, for: action)
         // A sample landed between minting and consuming. Say so instead of
         // reporting a consumed approval.
         guard observation.generation == mintedGeneration else {
@@ -782,7 +800,7 @@ final class ProcessMonitor: ObservableObject {
         else {
             throw ProcessControlError.observationRefreshed
         }
-        try requireActionable(process)
+        try requireActionable(process, for: action)
         do {
             try controller.execute(
                 authorized,

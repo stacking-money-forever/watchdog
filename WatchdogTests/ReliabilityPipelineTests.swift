@@ -229,6 +229,56 @@ final class ReliabilityPipelineTests: XCTestCase {
         XCTAssertEqual(signals.values.map(\.signal), [SIGSTOP], "a process resumed outside the app is not stopped again")
     }
 
+    func testSampleTakenBeforeASuspendDoesNotDropTheNewRecord() async throws {
+        // The CLI (or a click) stopped the process while a sample that still
+        // saw it running was in flight. The record must survive that sample.
+        let running = agent(pid: 8_230, cpu: 10)
+        let stopped = agent(pid: 8_230, cpu: 0, state: "T")
+        let ledger = SuspensionLedger.inMemory()
+        _ = try ledger.record(SuspensionRecord(
+            identity: running.identity,
+            executablePath: running.executablePath,
+            suspendedAt: Date(),
+            source: .cli
+        ))
+        let monitor = makeMonitor(
+            sampler: ScriptedSampler([.success([running])]),
+            ledger: ledger,
+            controller: controller(facts: FactsBox(stopped), signals: SignalLog())
+        )
+
+        await monitor.refresh()
+
+        XCTAssertEqual(ledger.all().map(\.identity), [running.identity])
+        XCTAssertEqual(monitor.watchdogSuspended.map(\.identity), [running.identity])
+    }
+
+    func testIgnoredSuspendedProcessCanStillBeResumed() async throws {
+        let signals = SignalLog()
+        let stopped = agent(pid: 8_231, cpu: 0, state: "T")
+        let ledger = SuspensionLedger.inMemory()
+        _ = try ledger.record(SuspensionRecord(
+            identity: stopped.identity,
+            executablePath: stopped.executablePath,
+            suspendedAt: Date(),
+            source: .auto
+        ))
+        let facts = FactsBox(stopped)
+        let monitor = makeMonitor(
+            sampler: ScriptedSampler([.success([stopped]), .success([stopped])]),
+            ledger: ledger,
+            controller: controller(facts: facts, signals: signals)
+        )
+        await monitor.refresh()
+        monitor.ignoreUntilExit(stopped)
+
+        let result = await monitor.resumeAllWatchdogSuspended()
+
+        XCTAssertEqual(result.resumed, 1)
+        XCTAssertEqual(result.failed, 0)
+        XCTAssertEqual(signals.values.map(\.signal), [SIGCONT])
+    }
+
     // MARK: - Termination verdicts
 
     func testZombieCountsAsExitedAndFailureIsNotFinal() {

@@ -196,6 +196,9 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
     /// that is still stopped, ask before quitting.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let monitor, case .normal = WatchdogLaunchMode.current else { return .terminateNow }
+        // A duplicate launch quits right away. It never monitored anything,
+        // so it must not prompt about (or resume) the primary's suspensions.
+        guard case .acquired = WatchdogInstanceLock.result else { return .terminateNow }
         // Logout, restart, and shutdown end every user process anyway; a
         // modal prompt there would only stall or cancel the logout.
         if NSAppleEventManager.shared().currentAppleEvent?
@@ -221,8 +224,8 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             Task { @MainActor in
-                _ = await monitor.resumeAllWatchdogSuspended()
-                sender.reply(toApplicationShouldTerminate: true)
+                let result = await monitor.resumeAllWatchdogSuspended()
+                sender.reply(toApplicationShouldTerminate: Self.confirmQuitAfterResume(failed: result.failed, monitor: monitor))
             }
             return .terminateLater
         case .alertSecondButtonReturn:
@@ -230,6 +233,24 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
         default:
             return .terminateCancel
         }
+    }
+
+    /// "재개 후 종료" must not quietly leave processes frozen: when some
+    /// could not be resumed (for example the pre-quit sample failed), say so
+    /// and let the user stay.
+    private static func confirmQuitAfterResume(failed: Int, monitor: ProcessMonitor) -> Bool {
+        guard failed > 0, !monitor.watchdogSuspended.isEmpty else { return true }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "프로세스 \(monitor.watchdogSuspended.count)개를 재개하지 못했습니다"
+        alert.informativeText = monitor.watchdogSuspended.prefix(5)
+            .map { "• \($0.displayName) (PID \($0.pid))" }
+            .joined(separator: "\n")
+            + "\n\n종료하면 멈춘 상태로 남습니다. 남아서 직접 재개하거나 watchdog-cli stopped --resume-all을 쓸 수 있습니다."
+        alert.addButton(withTitle: "남아 있기")
+        alert.addButton(withTitle: "그대로 종료")
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     private func activateExistingInstanceIfPresent() {

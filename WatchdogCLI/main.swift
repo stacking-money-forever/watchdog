@@ -541,6 +541,9 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
         var settings: [String: Double]
         var autoSuspendEnabled: Bool
         var appRunning: Bool
+        var loginItemStatus: String?
+        var loginItemOptedOut: Bool
+        var loginItemLastError: String?
         var problems: [String] = []
     }
     let clock = ContinuousClock()
@@ -556,8 +559,15 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
             "memoryThresholdGB": settings.memoryThresholdGB,
         ],
         autoSuspendEnabled: settings.autoSuspendEnabled,
-        appRunning: false
+        appRunning: false,
+        loginItemOptedOut: false
     )
+    // The app records what SMAppService last told it; the CLI cannot ask on
+    // the app's behalf (the status is resolved for the calling process).
+    let appDefaults = UserDefaults(suiteName: MonitorSettings.defaultsSuiteName) ?? .standard
+    report.loginItemStatus = appDefaults.string(forKey: "launchAtLogin.lastStatus")
+    report.loginItemOptedOut = appDefaults.bool(forKey: "launchAtLogin.userOptedOut")
+    report.loginItemLastError = appDefaults.string(forKey: "launchAtLogin.lastError")
     var rows: [RawProcessRow] = []
     // First run is cold; the next two reuse the argv cache the app keeps
     // between samples.
@@ -586,6 +596,12 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
     if report.agentCount > report.agentsWithWorkingDirectory {
         report.problems.append("작업 디렉터리를 읽지 못한 에이전트 \(report.agentCount - report.agentsWithWorkingDirectory)개")
     }
+    if report.appRunning, !report.loginItemOptedOut,
+       let status = report.loginItemStatus, status != "enabled" {
+        report.problems.append(status == "requiresApproval"
+            ? "로그인 항목 승인 필요 (시스템 설정 → 일반 → 로그인 항목)"
+            : "로그인 항목에 등록되지 않음 (\(status)\(report.loginItemLastError.map { ", \($0)" } ?? ""))")
+    }
     if report.ledgerEntries > 0 {
         report.problems.append("Watchdog이 정지한 채 멈춘 프로세스 \(report.ledgerEntries)개 (watchdog-cli stopped)")
     }
@@ -600,6 +616,18 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
     print("프로세스           전체 \(report.processCount) · 내 소유 \(report.ownProcessCount) · 에이전트 \(report.agentCount) (cwd 확인 \(report.agentsWithWorkingDirectory))")
     print("앱 설정            CPU \(Int(settings.cpuThreshold))% · 지속 \(Int(settings.sustainedDuration))초 · 메모리 \(settings.memoryThresholdGB)GB · 자동 정지 \(settings.autoSuspendEnabled ? "켬" : "끔")")
     print("앱 실행 중         \(report.appRunning ? "예" : "아니오")")
+    let loginLine: String
+    if report.loginItemOptedOut {
+        loginLine = "끔 (사용자가 끔)"
+    } else {
+        switch report.loginItemStatus {
+        case "enabled": loginLine = "켜짐"
+        case "requiresApproval": loginLine = "승인 필요"
+        case .some(let status): loginLine = "등록 안 됨 (\(status))"
+        case nil: loginLine = "알 수 없음 (앱이 아직 기록하지 않음)"
+        }
+    }
+    print("로그인 시 실행     \(loginLine)")
     print("정지 기록          \(report.ledgerEntries)개 · \(report.ledgerPath)")
     print(report.problems.isEmpty ? "문제 없음" : "확인 필요:\n" + report.problems.map { "  - \($0)" }.joined(separator: "\n"))
     return CLIExitCode.success
