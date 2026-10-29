@@ -182,6 +182,39 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
+    func testMainWindowShowsSixSidebarSectionsAndRoutes() {
+        let app = launch(arguments: ["--ui-test-window-fixture"])
+        defer { app.terminate() }
+
+        let window = app.descendants(matching: .any)["watchdog.window"]
+        XCTAssertTrue(window.waitForExistence(timeout: 8))
+
+        let sections = ["overview", "sessions", "processes", "journal", "rules", "settings"]
+        for section in sections {
+            let item = app.descendants(matching: .any)["watchdog.sidebar.\(section)"]
+            XCTAssertTrue(item.waitForExistence(timeout: 2), "missing sidebar \(section)")
+            item.click()
+            let detail = app.descendants(matching: .any)["watchdog.window.detail.\(section)"]
+            XCTAssertTrue(detail.waitForExistence(timeout: 2), "missing detail \(section)")
+        }
+    }
+
+    @MainActor
+    func testPopoverHasOpenWindowButton() {
+        let app = launch(arguments: ["--ui-test-fixture"])
+        defer { app.terminate() }
+
+        let button = app.buttons["watchdog.open-window"]
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertTrue(button.isEnabled)
+        XCTAssertEqual(button.label, "창 열기")
+        // The fixture hosts WatchdogMenuView in a titled NSWindow, not the
+        // MenuBarExtra popover. Clicking here can open the SwiftUI Window, but
+        // status-item / multi-window focus is the unstable part this fixture
+        // exists to avoid — assert the control itself, not the handoff.
+    }
+
+    @MainActor
     private func openActionMenu(in app: XCUIApplication) {
         let actions = app.descendants(matching: .any)["\(actionableProcess).actions"]
         XCTAssertTrue(actions.waitForExistence(timeout: 5))

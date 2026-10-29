@@ -16,9 +16,12 @@ enum WatchdogUITestFixture {
     /// Live refresh loop over a scripted sampler that swaps the CPU ranking of
     /// two rows every sample, for verifying that rows hold still while shown.
     static let reorder = "--ui-test-reorder-fixture"
+    /// Same fixture data as `actionable`, but opens the main window instead of
+    /// the popover hosting window (status-item clicks are unstable in XCUITest).
+    static let window = "--ui-test-window-fixture"
 
     static func isActive(in arguments: [String]) -> Bool {
-        [actionable, live, stale, outcome, exited, stillRunning, reorder]
+        [actionable, live, stale, outcome, exited, stillRunning, reorder, window]
             .contains { arguments.contains($0) }
     }
 }
@@ -184,8 +187,20 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
         case .uiTestFixture:
             NSApplication.shared.setActivationPolicy(.regular)
             Task { @MainActor in
-                await Task.yield()
-                WatchdogUITestFixtureHost.showWindowIfNeeded()
+                let wantsMainWindow = ProcessInfo.processInfo.arguments
+                    .contains(WatchdogUITestFixture.window)
+                if wantsMainWindow {
+                    WatchdogWindowOpener.pendingOpen = true
+                    for _ in 0..<80 {
+                        if WatchdogWindowOpener.openWindowAction != nil { break }
+                        await Task.yield()
+                        try? await Task.sleep(for: .milliseconds(50))
+                    }
+                    WatchdogWindowOpener.openMainWindow()
+                } else {
+                    await Task.yield()
+                    WatchdogUITestFixtureHost.showWindowIfNeeded()
+                }
                 NSApplication.shared.activate(ignoringOtherApps: true)
             }
         #endif
@@ -319,7 +334,8 @@ private var isRunningUnitTests: Bool {
 }
 
 @main
-struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.self) private var appDelegate
+struct WatchdogApp: App {
+    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.self) private var appDelegate
     // Owned but deliberately not observed: observing it re-evaluated the whole
     // scene on every published change. The panel observes it itself and the
     // label listens to alertCount alone.
@@ -380,9 +396,11 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
         let usesExitedFixture = arguments.contains(WatchdogUITestFixture.exited)
         let usesStillRunningFixture = arguments.contains(WatchdogUITestFixture.stillRunning)
         let usesReorderFixture = arguments.contains(WatchdogUITestFixture.reorder)
+        let usesWindowFixture = arguments.contains(WatchdogUITestFixture.window)
         shouldShowFixtureWindow = usesActionableFixture || usesLiveFixture || usesStaleFixture
             || usesOutcomeFixture || usesExitedFixture || usesStillRunningFixture || usesReorderFixture
-        if usesActionableFixture || usesOutcomeFixture || usesExitedFixture || usesStillRunningFixture {
+        if usesActionableFixture || usesOutcomeFixture || usesExitedFixture
+            || usesStillRunningFixture || usesWindowFixture {
             monitor.loadActionablePreview(
                 processes: Self.fixtureProcesses,
                 hotProcesses: [Self.fixtureProcesses[0].identity],
@@ -441,8 +459,15 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
                 .frame(width: 380, height: 520)
         } label: {
             WatchdogMenuBarLabel(monitor: monitor)
+                .modifier(WatchdogWindowOpenInstaller())
         }
         .menuBarExtraStyle(.window)
+
+        Window("Watchdog", id: "main") {
+            WatchdogWindowView(monitor: monitor, launchAtLogin: launchAtLogin)
+        }
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 820, height: 560)
     }
 
     #if DEBUG

@@ -51,6 +51,7 @@ private struct ProcessOutcomeSummary: Identifiable {
 struct WatchdogMenuView: View {
     @ObservedObject var monitor: ProcessMonitor
     @ObservedObject private var launchAtLogin: LaunchAtLoginController
+    @Environment(\.dismiss) private var dismiss
     @State private var scope: ProcessScope = .attention
     @State private var search = ""
     @State private var showsRules = false
@@ -399,6 +400,18 @@ struct WatchdogMenuView: View {
             }
 
             Spacer()
+
+            Button {
+                dismiss()
+                WatchdogWindowOpener.openMainWindow()
+            } label: {
+                Image(systemName: "macwindow")
+            }
+            .buttonStyle(.plain)
+            .help("창 열기")
+            .accessibilityLabel("창 열기")
+            .accessibilityIdentifier("watchdog.open-window")
+            .keyboardShortcut("o", modifiers: .command)
 
             Button {
                 Task { await monitor.refreshNow() }
