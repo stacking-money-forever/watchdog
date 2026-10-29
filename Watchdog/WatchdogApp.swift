@@ -323,19 +323,19 @@ struct WatchdogApp: App {
         switch mode {
         case .normal:
             monitor = ProcessMonitor(ledger: .standard(), journal: .standard())
-            let loaded = AgentRules.load(from: AgentRules.standardURL())
-            switch loaded {
-            case let .loaded(rules, _):
-                AgentCatalog.activate(rules: rules)
-            case .absent, .invalid:
-                AgentCatalog.resetToBuiltIn()
-            }
-            monitor.rulesStatus = loaded
+            monitor.reloadRules()
             // Launch smoke runs this path from a build directory.
             loginDefaults = ProcessInfo.processInfo.environment["WATCHDOG_DISABLE_LOGIN_ITEM"] == "1"
                 ? UserDefaults(suiteName: "dev.justn.watchdog.isolated") ?? .standard
                 : .standard
         default:
+            setenv(
+                AgentRules.fileEnvironmentKey,
+                FileManager.default.temporaryDirectory
+                    .appendingPathComponent("watchdog-isolated-rules-\(getpid()).json")
+                    .path,
+                0
+            )
             // Tests and fixtures never read or write the user's real defaults
             // or suspension ledger, and never prompt for notification access.
             let suite = "dev.justn.watchdog.isolated"

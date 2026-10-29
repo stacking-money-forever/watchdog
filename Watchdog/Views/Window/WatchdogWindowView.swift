@@ -19,6 +19,8 @@ struct WatchdogWindowView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
             switch selectedSection {
+            case .overview:
+                OverviewView(monitor: monitor)
             case .sessions:
                 SessionsView(monitor: monitor)
             case .processes:
@@ -29,8 +31,6 @@ struct WatchdogWindowView: View {
                 RulesView(monitor: monitor)
             case .settings:
                 SettingsView(monitor: monitor, launchAtLogin: launchAtLogin)
-            default:
-                WindowSectionPlaceholder(section: selectedSection)
             }
         }
         .frame(minWidth: 680, minHeight: 420)
@@ -80,25 +80,5 @@ struct WatchdogWindowView: View {
         guard let section = WatchdogWindowOpener.pendingSection else { return }
         selectedSection = section
         WatchdogWindowOpener.pendingSection = nil
-    }
-}
-
-struct WindowSectionPlaceholder: View {
-    let section: WindowSection
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(section.title)
-                .font(.title2)
-            Text(section.summary)
-                .foregroundStyle(.secondary)
-            Text("이 화면은 0.3에서 채워집니다")
-                .foregroundStyle(.tertiary)
-            Spacer()
-        }
-        .padding(24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("watchdog.window.detail.\(section.rawValue)")
     }
 }

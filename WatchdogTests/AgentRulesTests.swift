@@ -91,6 +91,26 @@ final class AgentRulesTests: XCTestCase {
         XCTAssertEqual(AgentRules.standardURL(environment: environment), url)
     }
 
+    func testWriteTemplateCreatesExampleRulesAndRefusesOverwrite() throws {
+        let url = uniqueURL()
+        try AgentRules.writeTemplate(to: url)
+        XCTAssertThrowsError(try AgentRules.writeTemplate(to: url)) { error in
+            XCTAssertEqual(error as? AgentRules.WriteError, .alreadyExists(url))
+        }
+        guard case let .loaded(rules, loadedURL) = AgentRules.load(from: url) else {
+            return XCTFail("expected loaded")
+        }
+        XCTAssertEqual(loadedURL, url)
+        XCTAssertEqual(rules.agentNames, ["my-agent"])
+        XCTAssertEqual(
+            rules.packageMarkers,
+            [PackageMarker(marker: "/@example/my-agent/", agent: "my-agent")]
+        )
+        XCTAssertEqual(rules.serviceSubcommands, [])
+        XCTAssertEqual(rules.sessionHosts, [])
+        XCTAssertEqual(rules.ignoreNames, [])
+    }
+
     private func uniqueURL() -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("watchdog-rules-\(UUID().uuidString).json")

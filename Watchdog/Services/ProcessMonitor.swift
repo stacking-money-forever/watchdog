@@ -208,6 +208,17 @@ final class ProcessMonitor: ObservableObject {
         )
     }
 
+    func reloadRules() {
+        let loaded = AgentRules.load(from: AgentRules.standardURL())
+        switch loaded {
+        case let .loaded(rules, _):
+            AgentCatalog.activate(rules: rules)
+        case .absent, .invalid:
+            AgentCatalog.resetToBuiltIn()
+        }
+        rulesStatus = loaded
+    }
+
     func start() {
         guard refreshTask == nil else { return }
         requestNotificationPermission()

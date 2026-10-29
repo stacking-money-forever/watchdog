@@ -73,6 +73,38 @@ struct AgentRules: Codable, Equatable, Sendable {
         return support.appendingPathComponent("Watchdog/agent-rules.json")
     }
 
+    enum WriteError: Error, LocalizedError, Equatable {
+        case alreadyExists(URL)
+
+        var errorDescription: String? {
+            switch self {
+            case let .alreadyExists(url):
+                "이미 있습니다: \(url.path)"
+            }
+        }
+    }
+
+    /// Same example payload as `watchdog-cli rules init`.
+    static func writeTemplate(to url: URL) throws {
+        if FileManager.default.fileExists(atPath: url.path) {
+            throw WriteError.alreadyExists(url)
+        }
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let example: [String: Any] = [
+            "_comment": "Watchdog 사용자 규칙. agentNames에 없는 에이전트 CLI 이름을 추가합니다.",
+            "agentNames": ["my-agent"],
+            "packageMarkers": [["marker": "/@example/my-agent/", "agent": "my-agent"]],
+            "serviceSubcommands": [] as [String],
+            "sessionHosts": [] as [String],
+            "ignoreNames": [] as [String],
+        ]
+        let data = try JSONSerialization.data(withJSONObject: example, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: url, options: .atomic)
+    }
+
     static func load(from url: URL) -> LoadResult {
         let path = url.path
         guard FileManager.default.fileExists(atPath: path) else {

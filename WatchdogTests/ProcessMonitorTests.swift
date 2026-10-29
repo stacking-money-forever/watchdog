@@ -80,6 +80,38 @@ final class ProcessMonitorTests: XCTestCase {
         XCTAssertEqual(monitor.orphans(limit: 3).map(\.id), [4_002])
     }
 
+    func testReloadRulesPublishesInvalidAndResetsCatalogToBuiltIn() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("watchdog-reload-invalid-\(UUID().uuidString).json")
+        try "{".write(to: url, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let previous = getenv(AgentRules.fileEnvironmentKey).map { String(cString: $0) }
+        setenv(AgentRules.fileEnvironmentKey, url.path, 1)
+        defer {
+            if let previous {
+                setenv(AgentRules.fileEnvironmentKey, previous, 1)
+            } else {
+                unsetenv(AgentRules.fileEnvironmentKey)
+            }
+            AgentCatalog.resetToBuiltIn()
+        }
+
+        AgentCatalog.activate(rules: AgentRules(agentNames: ["fakeagent"]))
+        XCTAssertEqual(AgentCatalog.agentName(command: "fakeagent", launchScript: nil), "fakeagent")
+
+        let monitor = makeMonitor()
+        monitor.reloadRules()
+
+        guard case let .invalid(invalidURL, reason) = monitor.rulesStatus else {
+            return XCTFail("expected invalid")
+        }
+        XCTAssertEqual(invalidURL, url)
+        XCTAssertFalse(reason.isEmpty)
+        XCTAssertNil(AgentCatalog.agentName(command: "fakeagent", launchScript: nil))
+        XCTAssertEqual(AgentCatalog.agentName(command: "claude", launchScript: nil), "claude")
+    }
+
     func testAlertCountExcludesOrphanOnlyProcess() {
         let monitor = makeMonitor()
         var process = snapshot(pid: 2_001, name: "/usr/local/bin/gjc")

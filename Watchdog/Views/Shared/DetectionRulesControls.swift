@@ -74,6 +74,27 @@ struct DetectionRulesControls: View {
             } description: {
                 "CPU 임계값을 지속해서 넘긴 코딩 에이전트에만 SIGSTOP을 보냅니다."
             }
+
+            item {
+                Picker("자동 정지 범위", selection: $monitor.autoSuspendScope) {
+                    Text("에이전트만").tag(MonitorSettings.AutoSuspendScope.agent)
+                    Text("세션 전체").tag(MonitorSettings.AutoSuspendScope.session)
+                }
+                .pickerStyle(.segmented)
+                .disabled(!monitor.autoSuspendEnabled)
+                .accessibilityLabel("자동 정지 범위")
+                .accessibilityValue(scopeValue)
+                .accessibilityIdentifier("watchdog.rules.auto-suspend-scope")
+            } description: {
+                "세션 전체는 세션 합계가 임계값을 지속 초과하면 루트와 자손을 함께 멈추고 함께 재개합니다. 자손만 멈추지는 않습니다."
+            }
+        }
+    }
+
+    private var scopeValue: String {
+        switch monitor.autoSuspendScope {
+        case .agent: "에이전트만"
+        case .session: "세션 전체"
         }
     }
 
