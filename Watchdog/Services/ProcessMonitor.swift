@@ -63,6 +63,11 @@ final class ProcessMonitor: ObservableObject {
             defaults.set(autoSuspendEnabled, forKey: Keys.autoSuspendEnabled)
         }
     }
+    @Published var autoSuspendScope: MonitorSettings.AutoSuspendScope {
+        didSet {
+            defaults.set(autoSuspendScope.rawValue, forKey: Keys.autoSuspendScope)
+        }
+    }
 
     @Published var threshold: Double {
         didSet {
@@ -99,6 +104,7 @@ final class ProcessMonitor: ObservableObject {
 
     /// Processes Watchdog itself stopped and that are still stopped.
     @Published private(set) var watchdogSuspended: [SuspensionRecord] = []
+    @Published var rulesStatus: AgentRules.LoadResult = .absent(AgentRules.standardURL())
 
     /// Newest first, capped for the window journal table.
     @Published private(set) var journalEntries: [ActionJournalEntry] = []
@@ -173,6 +179,7 @@ final class ProcessMonitor: ObservableObject {
         memoryThresholdGB = settings.memoryThresholdGB
         notificationsEnabled = defaults.object(forKey: Keys.notificationsEnabled) as? Bool ?? true
         autoSuspendEnabled = settings.autoSuspendEnabled
+        autoSuspendScope = settings.autoSuspendScope
         defaults.set(threshold, forKey: Keys.threshold)
         defaults.set(sustainedDuration, forKey: Keys.sustainedDuration)
         defaults.set(memoryThresholdGB, forKey: Keys.memoryThresholdGB)
@@ -196,7 +203,8 @@ final class ProcessMonitor: ObservableObject {
             cpuThreshold: threshold,
             sustainedDuration: sustainedDuration,
             memoryThresholdGB: memoryThresholdGB,
-            autoSuspendEnabled: autoSuspendEnabled
+            autoSuspendEnabled: autoSuspendEnabled,
+            autoSuspendScope: autoSuspendScope
         )
     }
 
@@ -559,7 +567,43 @@ final class ProcessMonitor: ObservableObject {
     }
 
     func resume(_ process: ProcessSnapshot) {
-        performImmediate(.resume, process: process, success: "재개: \(process.displayName)")
+        Task {
+            do {
+                let companions = ledger.groupCompanions(of: process.identity)
+                do {
+                    try await performAction(.resume, process: process, source: .manual, journalSource: .app)
+                } catch ProcessControlError.observationRefreshed {
+                    guard let fresh = processes.first(where: { $0.identity == process.identity }) else {
+                        throw ProcessControlError.processChanged
+                    }
+                    try await performAction(.resume, process: fresh, source: .manual, journalSource: .app)
+                }
+                var extra = 0
+                for record in companions {
+                    guard let member = processes.first(where: { $0.identity == record.identity }) else {
+                        continue
+                    }
+                    do {
+                        try await performAction(
+                            .resume,
+                            process: member,
+                            source: record.source,
+                            journalSource: .app
+                        )
+                        extra += 1
+                    } catch {
+                        recordActionOutcome(.failed(error.localizedDescription), for: member.identity)
+                    }
+                }
+                let message = extra > 0
+                    ? "재개: \(process.displayName) · 세션 멤버 \(extra)개"
+                    : "재개: \(process.displayName)"
+                showFeedback(.init(kind: .success, message: message))
+            } catch {
+                recordActionOutcome(.failed(error.localizedDescription), for: process.identity)
+                showFeedback(.init(kind: .error, message: error.localizedDescription))
+            }
+        }
     }
 
     func reloadJournal() {
@@ -686,6 +730,39 @@ final class ProcessMonitor: ObservableObject {
     /// through the same authorization pipeline as manual actions.
     private func autoSuspend(_ update: MonitorUpdate?) async {
         guard autoSuspendEnabled, let update else { return }
+        if !update.autoSuspendGroups.isEmpty {
+            for group in update.autoSuspendGroups {
+                guard let root = update.processes.first(where: { $0.identity == group.root }) else {
+                    continue
+                }
+                let groupID = IdentityToken(group.root).description
+                let reason = sessionAutoSuspendReason(for: group.root, in: update)
+                let targets = [root] + group.members
+                var succeeded = 0
+                for snapshot in targets {
+                    do {
+                        try await performAction(
+                            .suspend,
+                            process: snapshot,
+                            source: .auto,
+                            journalSource: .auto,
+                            reason: reason,
+                            groupID: groupID
+                        )
+                        succeeded += 1
+                    } catch {
+                        recordActionOutcome(.failed(error.localizedDescription), for: snapshot.identity)
+                    }
+                }
+                showFeedback(
+                    .init(
+                        kind: succeeded > 0 ? .success : .error,
+                        message: "세션 일시 정지: \(root.displayName) · 멤버 \(targets.count)개 중 \(succeeded)개"
+                    )
+                )
+            }
+            return
+        }
         for snapshot in update.autoSuspendCandidates {
             do {
                 try await performAction(
@@ -725,21 +802,34 @@ final class ProcessMonitor: ObservableObject {
         reconcileLedger()
         var resumed = 0
         var failed = 0
+        var handled: Set<ProcessIdentity> = []
         for record in watchdogSuspended {
-            guard let process = processes.first(where: { $0.identity == record.identity }) else {
-                failed += 1
-                continue
+            guard !handled.contains(record.identity) else { continue }
+            let batch: [SuspensionRecord]
+            if let groupID = record.groupID,
+               IdentityToken(record.identity).description == groupID {
+                let companions = ledger.records(inGroup: groupID).filter { $0.identity != record.identity }
+                batch = [record] + companions
+            } else {
+                batch = [record]
             }
-            do {
-                try await performAction(
-                    .resume,
-                    process: process,
-                    source: record.source,
-                    journalSource: .app
-                )
-                resumed += 1
-            } catch {
-                failed += 1
+            for item in batch {
+                handled.insert(item.identity)
+                guard let process = processes.first(where: { $0.identity == item.identity }) else {
+                    failed += 1
+                    continue
+                }
+                do {
+                    try await performAction(
+                        .resume,
+                        process: process,
+                        source: item.source,
+                        journalSource: .app
+                    )
+                    resumed += 1
+                } catch {
+                    failed += 1
+                }
             }
         }
         reconcileLedger()
@@ -911,14 +1001,18 @@ final class ProcessMonitor: ObservableObject {
     func refreshAutoSuspendPreview(
         hot: Set<ProcessIdentity>,
         highMemory: Set<ProcessIdentity>,
-        snapshots: [ProcessSnapshot]
+        snapshots: [ProcessSnapshot],
+        autoSuspendGroups: [AutoSuspendGroup] = [],
+        sessions: [AgentSession] = []
     ) async {
         guard autoSuspendEnabled else { return }
-        let candidates = snapshots.filter {
-            hot.contains($0.identity)
-                && MonitorEngine.isAutoSuspendEligible($0)
-                && !engine.userResumed.contains($0.identity)
-        }
+        let candidates = autoSuspendGroups.isEmpty
+            ? snapshots.filter {
+                hot.contains($0.identity)
+                    && MonitorEngine.isAutoSuspendEligible($0)
+                    && !engine.userResumed.contains($0.identity)
+            }
+            : []
         await autoSuspend(
             MonitorUpdate(
                 processes: snapshots,
@@ -926,7 +1020,9 @@ final class ProcessMonitor: ObservableObject {
                 highMemory: highMemory,
                 newlyHot: hot,
                 newlyHighMemory: highMemory,
-                autoSuspendCandidates: candidates
+                autoSuspendCandidates: candidates,
+                sessions: sessions,
+                autoSuspendGroups: autoSuspendGroups
             )
         )
     }
@@ -1035,7 +1131,8 @@ final class ProcessMonitor: ObservableObject {
         process: ProcessSnapshot,
         source: SuspensionRecord.Source,
         journalSource: ActionJournalEntry.Source,
-        reason: String? = nil
+        reason: String? = nil,
+        groupID: String? = nil
     ) async throws {
         guard !action.isDestructive else { throw ProcessControlError.authorizationInvalid }
         let observation = try requireActionable(process, for: action)
@@ -1052,7 +1149,8 @@ final class ProcessMonitor: ObservableObject {
             mintedGeneration: observation.generation,
             source: source,
             journalSource: journalSource,
-            reason: reason
+            reason: reason,
+            groupID: groupID
         )
     }
 
@@ -1063,7 +1161,8 @@ final class ProcessMonitor: ObservableObject {
         mintedGeneration: UInt64,
         source: SuspensionRecord.Source = .manual,
         journalSource: ActionJournalEntry.Source = .app,
-        reason: String? = nil
+        reason: String? = nil,
+        groupID: String? = nil
     ) async throws {
         let observation = try requireActionable(process, for: action)
         // A sample landed between minting and consuming. Say so instead of
@@ -1093,7 +1192,8 @@ final class ProcessMonitor: ObservableObject {
                         identity: process.identity,
                         executablePath: process.executablePath,
                         suspendedAt: Date(),
-                        source: source
+                        source: source,
+                        groupID: groupID
                     )
                 )
             } catch {
@@ -1289,6 +1389,13 @@ final class ProcessMonitor: ObservableObject {
 
     private func autoSuspendReason(for process: ProcessSnapshot) -> String {
         "CPU \(Int(process.cpuPercent.rounded()))% 지속 \(Int(sustainedDuration.rounded()))초"
+    }
+
+    private func sessionAutoSuspendReason(for root: ProcessIdentity, in update: MonitorUpdate) -> String {
+        let cpu = update.sessions.first { $0.id == root }?.cpuPercent
+            ?? update.processes.first { $0.identity == root }?.cpuPercent
+            ?? 0
+        return "세션 합계 CPU \(Int(cpu.rounded()))% 지속 \(Int(sustainedDuration.rounded()))초"
     }
 
     private func lastSuspendJournalID(for identity: ProcessIdentity) -> UUID? {

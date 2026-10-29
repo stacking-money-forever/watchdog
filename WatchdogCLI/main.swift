@@ -15,12 +15,21 @@ let usageText = """
   inspect <TOKEN|PID> [--json]
       한 프로세스의 신원, 상태, 작업 디렉터리, 워크트리 상태를 보여 줍니다.
   watch [--interval 초] [--count N] [--duration 초] [--cpu %] [--sustain 초] [--memory GB]
-        [--auto-suspend] [--json]
+        [--auto-suspend] [--scope agent|session] [--only TOKEN|PID[,…]] [--json]
       앱과 같은 감지 엔진으로 지속 감시하며 경고 이벤트를 출력합니다. Ctrl-C로 끝냅니다.
+      --scope는 자동 정지가 프로세스 단위인지 세션(루트+멤버) 단위인지입니다. 기본 agent.
+      --only는 반복할 수 있습니다. 자동 정지를 그 프로세스와 자손으로 제한합니다.
+      세션 범위에서는 루트 자체가 --only에 있어야 합니다.
   stopped [--resume-all] [--json]
       Watchdog(앱·CLI)이 일시 정지한 채 멈춰 있는 프로세스를 보여 줍니다.
   doctor [--json]
       샘플링 비용과 환경을 진단합니다.
+  rules show [--json]
+      사용자 규칙 파일 경로와 적용 내용, 검증 경고를 보여 줍니다.
+  rules validate [FILE]
+      규칙 파일을 읽어 검증합니다. 문제가 있으면 종료 코드 1입니다.
+  rules init
+      표준 경로에 예시 규칙 파일을 만듭니다. 이미 있으면 거부합니다.
   snapshot [--out FILE]
       현재 프로세스 목록을 분류 정확도 픽스처와 같은 JSON으로 저장합니다. --out이 없으면 표준 출력입니다.
   audit FIXTURE [--labels FILE] [--json]
@@ -46,6 +55,7 @@ struct Arguments {
     var positionals: [String] = []
     var flags: Set<String> = []
     var options: [String: String] = [:]
+    var onlyValues: [String] = []
 
     static let valueOptions: Set<String> = [
         "--scope", "--search", "--interval", "--count", "--duration", "--cpu", "--sustain", "--memory",
@@ -56,7 +66,12 @@ struct Arguments {
     init(_ raw: [String]) throws {
         var iterator = raw.makeIterator()
         while let argument = iterator.next() {
-            if Self.valueOptions.contains(argument) {
+            if argument == "--only" {
+                guard let value = iterator.next() else {
+                    throw CLIUsageError("\(argument)에 값이 필요합니다.")
+                }
+                onlyValues.append(value)
+            } else if Self.valueOptions.contains(argument) {
                 guard let value = iterator.next() else {
                     throw CLIUsageError("\(argument)에 값이 필요합니다.")
                 }
@@ -91,6 +106,23 @@ struct CLIUsageError: Error {
     init(_ message: String) { self.message = message }
 }
 
+func parseOnlySelectors(_ values: [String]) throws -> [CLITarget] {
+    var selectors: [CLITarget] = []
+    for value in values {
+        for piece in value.split(separator: ",", omittingEmptySubsequences: false) {
+            let text = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                throw CLIUsageError("--only 값은 TOKEN 또는 PID입니다.")
+            }
+            guard let target = CLITarget(parsing: text) else {
+                throw CLIUsageError("--only 값은 TOKEN 또는 PID입니다: \(text)")
+            }
+            selectors.append(target)
+        }
+    }
+    return selectors
+}
+
 // MARK: - Output helpers
 
 func printError(_ message: String) {
@@ -114,6 +146,34 @@ func pad(_ text: String, _ width: Int) -> String {
     let count = text.count
     if count >= width { return String(text.prefix(width)) }
     return text + String(repeating: " ", count: width - count)
+}
+
+func inspectKindText(_ process: ProcessSnapshot) -> String {
+    if process.agentConfidence == .suspected { return "에이전트(추정)" }
+    if process.kind == .service { return "서비스" }
+    return process.kind.rawValue
+}
+
+func activateUserRules() -> AgentRules.LoadResult {
+    let loaded = AgentRules.load(from: AgentRules.standardURL())
+    switch loaded {
+    case let .loaded(rules, _):
+        AgentCatalog.activate(rules: rules)
+    case .absent, .invalid:
+        AgentCatalog.resetToBuiltIn()
+    }
+    return loaded
+}
+
+func rulesStatusLine(_ loaded: AgentRules.LoadResult) -> String {
+    switch loaded {
+    case let .loaded(rules, _):
+        return "\(rules.appliedCount)개 규칙 적용"
+    case .absent:
+        return "없음"
+    case let .invalid(_, reason):
+        return "손상(\(reason))"
+    }
 }
 
 struct ProcessRecord: Encodable {
@@ -243,6 +303,7 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
         if process.cpuPercent >= settings.cpuThreshold { flags.append("cpu") }
         if process.residentBytes >= settings.memoryThresholdBytes { flags.append("memory") }
         if process.suspectedOrphan { flags.append("orphan") }
+        if process.agentConfidence == .suspected { flags.append("suspected") }
         if let ancestor = process.agentAncestor { flags.append("via:\(ancestor.name)#\(ancestor.pid)") }
         if stopped.contains(process.identity) { flags.append("stopped-by-watchdog") }
         if process.isProtected { flags.append("protected") }
@@ -349,6 +410,7 @@ func runSessions(_ arguments: Arguments) async throws -> Int32 {
         var flags: [String] = []
         if session.isSuspended { flags.append("suspended") }
         if byIdentity[session.id]?.suspectedOrphan == true { flags.append("orphan") }
+        if byIdentity[session.id]?.agentConfidence == .suspected { flags.append("suspected") }
         if session.kind == .service { flags.append("service") }
         print(
             pad(IdentityToken(session.id).description, 30)
@@ -396,7 +458,7 @@ func runInspect(_ arguments: Arguments) async throws -> Int32 {
         ("이름", process.displayName),
         ("경로(argv0)", process.executablePath),
         ("실행 스크립트", process.launchScript ?? "-"),
-        ("종류", process.kind == .service ? "서비스" : process.kind.rawValue),
+        ("종류", inspectKindText(process)),
         ("PID / PPID / PGID", "\(process.id) / \(process.parentPID) / \(process.processGroupID)"),
         ("UID", "\(process.userID)"),
         ("상태", process.state + (process.isSuspended ? " (정지됨)" : "")),
@@ -454,9 +516,16 @@ func runControl(_ action: CLIAction, _ arguments: Arguments) async throws -> Int
                 "token": report.token.description,
                 "name": report.name,
                 "outcome": report.outcome.localizedDescription,
+                "groupResumed": report.accompanying.map(\.token.description).joined(separator: ","),
             ])
         } else {
             print("\(report.action.rawValue): \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)")
+            if !report.accompanying.isEmpty {
+                print("세션 그룹 멤버 \(report.accompanying.count)개도 재개했습니다")
+                for extra in report.accompanying {
+                    print("  \(extra.name) (\(extra.token)) → \(extra.outcome.localizedDescription)")
+                }
+            }
         }
         return report.outcome.isError ? CLIExitCode.failure : CLIExitCode.success
     }
@@ -475,14 +544,35 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
         var failures = 0
         var results: [ResumeResult] = []
         let control = CLIControl(ledger: ledger)
+        var handled: Set<ProcessIdentity> = []
         for record in records {
+            guard !handled.contains(record.identity) else { continue }
             let token = IdentityToken(record.identity).description
             let result = try await control.run(.resume, target: .token(IdentityToken(record.identity)), force: true)
+            handled.insert(record.identity)
             switch result {
             case let .performed(report):
+                handled.formUnion(report.accompanying.map(\.token.identity))
                 if report.outcome.isError { failures += 1 }
                 results.append(.init(token: token, name: report.name, result: report.outcome.isError ? "failed" : "resumed", message: report.outcome.localizedDescription))
-                if !arguments.json { print("resume: \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)") }
+                if !arguments.json {
+                    print("resume: \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)")
+                    if !report.accompanying.isEmpty {
+                        print("세션 그룹 멤버 \(report.accompanying.count)개도 재개했습니다")
+                    }
+                }
+                for extra in report.accompanying {
+                    results.append(.init(
+                        token: extra.token.description,
+                        name: extra.name,
+                        result: extra.outcome.isError ? "failed" : "resumed",
+                        message: extra.outcome.localizedDescription
+                    ))
+                    if extra.outcome.isError { failures += 1 }
+                    if !arguments.json {
+                        print("  resume: \(extra.name) (\(extra.token)) → \(extra.outcome.localizedDescription)")
+                    }
+                }
             case let .failed(error, _):
                 failures += 1
                 let message = error.errorDescription ?? "\(error)"
@@ -508,6 +598,7 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
             let path: String
             let suspendedAt: Date
             let source: String
+            let groupID: String?
         }
         emitJSON(records.map {
             StoppedRecord(
@@ -515,7 +606,8 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
                 name: $0.displayName,
                 path: $0.executablePath,
                 suspendedAt: $0.suspendedAt,
-                source: $0.source.rawValue
+                source: $0.source.rawValue,
+                groupID: $0.groupID
             )
         })
         return CLIExitCode.success
@@ -527,16 +619,42 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
     print(pad("TOKEN", 30) + pad("NAME", 24) + pad("SOURCE", 8) + "SUSPENDED AT")
-    for record in records {
+    for row in groupedStoppedRows(records) {
+        let indent = row.isMember ? "  " : ""
         print(
-            pad(IdentityToken(record.identity).description, 30)
-                + pad(record.displayName, 24)
-                + pad(record.source.rawValue, 8)
-                + formatter.string(from: record.suspendedAt)
+            pad(indent + IdentityToken(row.record.identity).description, 30)
+                + pad(row.record.displayName, 24)
+                + pad(row.record.source.rawValue, 8)
+                + formatter.string(from: row.record.suspendedAt)
         )
     }
     print("\n재개: watchdog-cli resume <TOKEN> 또는 watchdog-cli stopped --resume-all")
     return CLIExitCode.success
+}
+
+private struct StoppedRow {
+    let record: SuspensionRecord
+    let isMember: Bool
+}
+
+private func groupedStoppedRows(_ records: [SuspensionRecord]) -> [StoppedRow] {
+    var emitted: Set<ProcessIdentity> = []
+    var rows: [StoppedRow] = []
+    for record in records {
+        guard !emitted.contains(record.identity) else { continue }
+        guard let groupID = record.groupID, IdentityToken(record.identity).description == groupID else {
+            emitted.insert(record.identity)
+            rows.append(StoppedRow(record: record, isMember: false))
+            continue
+        }
+        emitted.insert(record.identity)
+        rows.append(StoppedRow(record: record, isMember: false))
+        for member in records where member.groupID == groupID && member.identity != record.identity {
+            guard emitted.insert(member.identity).inserted else { continue }
+            rows.append(StoppedRow(record: member, isMember: true))
+        }
+    }
+    return rows
 }
 
 // MARK: - watch
@@ -562,8 +680,18 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     settings.sustainedDuration = MonitorSettings.normalizedDuration(try arguments.double("--sustain", default: settings.sustainedDuration, range: 2...300))
     settings.memoryThresholdGB = MonitorSettings.normalizedMemory(try arguments.double("--memory", default: settings.memoryThresholdGB, range: 0.1...1_024))
     // Auto-suspend never inherits the app setting; the CLI only stops
-    // processes when explicitly asked.
+    // processes when explicitly asked. Scope defaults to agent and is only
+    // meaningful on this command (`list` uses --scope for a different enum).
     settings.autoSuspendEnabled = arguments.flags.contains("--auto-suspend")
+    if let scopeText = arguments.options["--scope"] {
+        guard let scope = MonitorSettings.AutoSuspendScope(rawValue: scopeText) else {
+            throw CLIUsageError("watch의 --scope는 agent 또는 session입니다.")
+        }
+        settings.autoSuspendScope = scope
+    } else {
+        settings.autoSuspendScope = .agent
+    }
+    let onlySelectors = try parseOnlySelectors(arguments.onlyValues)
     let interval = try arguments.double("--interval", default: 2, range: 0.5...60)
     var maximumTicks: Int?
     if let text = arguments.options["--count"] {
@@ -605,8 +733,11 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     emit(
         "watch.start",
         nil,
-        "CPU \(Int(settings.cpuThreshold))% · 메모리 \(memoryText(settings.memoryThresholdBytes)) · 지속 \(Int(settings.sustainedDuration))초 · 자동 정지 \(settings.autoSuspendEnabled ? "켬" : "끔")"
+        "CPU \(Int(settings.cpuThreshold))% · 메모리 \(memoryText(settings.memoryThresholdBytes)) · 지속 \(Int(settings.sustainedDuration))초 · 자동 정지 \(settings.autoSuspendEnabled ? "켬(\(settings.autoSuspendScope.rawValue))" : "끔")"
     )
+    if settings.autoSuspendEnabled, !onlySelectors.isEmpty {
+        emit("auto-suspend.restrict", nil, "auto-suspend restricted to \(onlySelectors.count) targets")
+    }
     let sampler = ProcessSampler()
     let control = CLIControl()
     var engine = MonitorEngine(continuityGap: .milliseconds(Int(max(5, interval * 2.5) * 1_000)))
@@ -641,7 +772,10 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
                     emit("resumed.by-user", process, "자동 정지 대상에서 제외")
                 }
             }
-            let update = engine.ingest(sample.processes, settings: settings, at: clock.now)
+            var update = engine.ingest(sample.processes, settings: settings, at: clock.now)
+            if settings.autoSuspendEnabled, !onlySelectors.isEmpty {
+                update = AutoSuspendTargetFilter.restrict(update, to: onlySelectors)
+            }
             let byIdentity = Dictionary(update.processes.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
             for identity in update.newlyHot {
                 if let process = byIdentity[identity] {
@@ -694,8 +828,13 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             previousHighMemory = update.highMemory
             previousHotSessions = update.hotSessions
             previousHighMemorySessions = update.highMemorySessions
-            for candidate in update.autoSuspendCandidates {
-                switch try await control.run(.suspend, target: .token(IdentityToken(candidate.identity)), force: true) {
+            func suspendCandidate(_ candidate: ProcessSnapshot, groupID: String?) async throws {
+                switch try await control.run(
+                    .suspend,
+                    target: .token(IdentityToken(candidate.identity)),
+                    force: true,
+                    groupID: groupID
+                ) {
                 case let .performed(report):
                     autoSuspended.insert(candidate.identity)
                     emit("auto-suspend", candidate, report.outcome.localizedDescription)
@@ -703,6 +842,20 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
                     emit("auto-suspend.failed", candidate, error.errorDescription)
                 case let .decided(decision):
                     emit("auto-suspend.skipped", candidate, "\(decision)")
+                }
+            }
+            if settings.autoSuspendScope == .session {
+                for group in update.autoSuspendGroups {
+                    guard let root = byIdentity[group.root] else { continue }
+                    let groupID = IdentityToken(group.root).description
+                    try await suspendCandidate(root, groupID: groupID)
+                    for member in group.members {
+                        try await suspendCandidate(member, groupID: groupID)
+                    }
+                }
+            } else {
+                for candidate in update.autoSuspendCandidates {
+                    try await suspendCandidate(candidate, groupID: nil)
                 }
             }
             if !arguments.json, ticks == 1 {
@@ -745,6 +898,8 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
         var loginItemStatus: String?
         var loginItemOptedOut: Bool
         var loginItemLastError: String?
+        var rulesPath: String
+        var rulesStatus: String
         var problems: [String] = []
     }
     let clock = ContinuousClock()
@@ -761,8 +916,15 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
         ],
         autoSuspendEnabled: settings.autoSuspendEnabled,
         appRunning: false,
-        loginItemOptedOut: false
+        loginItemOptedOut: false,
+        rulesPath: AgentRules.standardURL().path,
+        rulesStatus: ""
     )
+    let rulesLoad = AgentRules.load(from: AgentRules.standardURL())
+    report.rulesStatus = rulesStatusLine(rulesLoad)
+    if case let .invalid(_, reason) = rulesLoad {
+        report.problems.append("사용자 규칙 손상: \(reason)")
+    }
     // The app records what SMAppService last told it; the CLI cannot ask on
     // the app's behalf (the status is resolved for the calling process).
     let appDefaults = UserDefaults(suiteName: MonitorSettings.defaultsSuiteName) ?? .standard
@@ -830,6 +992,7 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
     }
     print("로그인 시 실행     \(loginLine)")
     print("정지 기록          \(report.ledgerEntries)개 · \(report.ledgerPath)")
+    print("사용자 규칙        \(report.rulesStatus) · \(report.rulesPath)")
     print(report.problems.isEmpty ? "문제 없음" : "확인 필요:\n" + report.problems.map { "  - \($0)" }.joined(separator: "\n"))
     return CLIExitCode.success
 }
@@ -882,6 +1045,132 @@ func runSnapshot(_ arguments: Arguments) throws -> Int32 {
     return CLIExitCode.success
 }
 
+func runRules(_ arguments: Arguments) throws -> Int32 {
+    guard let subcommand = arguments.positionals.first else {
+        throw CLIUsageError("rules에는 show, validate, init 중 하나가 필요합니다.")
+    }
+    switch subcommand {
+    case "show": return try runRulesShow(arguments)
+    case "validate": return try runRulesValidate(arguments)
+    case "init": return try runRulesInit()
+    default:
+        throw CLIUsageError("알 수 없는 rules 명령: \(subcommand)")
+    }
+}
+
+func runRulesShow(_ arguments: Arguments) throws -> Int32 {
+    let url = AgentRules.standardURL()
+    let loaded = AgentRules.load(from: url)
+    let rules: AgentRules?
+    let issues: [String]
+    switch loaded {
+    case let .loaded(value, _):
+        rules = value
+        issues = value.validationIssues()
+    case .absent, .invalid:
+        rules = nil
+        issues = []
+    }
+    if arguments.json {
+        struct Report: Encodable {
+            let path: String
+            let status: String
+            let reason: String?
+            let rules: AgentRules?
+            let validationIssues: [String]
+            let appliedCount: Int
+        }
+        let reason: String?
+        if case let .invalid(_, text) = loaded { reason = text } else { reason = nil }
+        emitJSON(
+            Report(
+                path: url.path,
+                status: rulesStatusLine(loaded),
+                reason: reason,
+                rules: rules,
+                validationIssues: issues,
+                appliedCount: rules?.appliedCount ?? 0
+            )
+        )
+        return CLIExitCode.success
+    }
+    print("경로                \(url.path)")
+    print("상태                \(rulesStatusLine(loaded))")
+    if case let .invalid(_, reason) = loaded {
+        print("이유                \(reason)")
+    }
+    if let rules {
+        print("agentNames          \(rules.agentNames.isEmpty ? "-" : rules.agentNames.joined(separator: ", "))")
+        print("packageMarkers      \(rules.packageMarkers.isEmpty ? "-" : rules.packageMarkers.map { "\($0.marker) → \($0.agent)" }.joined(separator: ", "))")
+        print("serviceSubcommands  \(rules.serviceSubcommands.isEmpty ? "-" : rules.serviceSubcommands.joined(separator: ", "))")
+        print("sessionHosts        \(rules.sessionHosts.isEmpty ? "-" : rules.sessionHosts.joined(separator: ", "))")
+        print("ignoreNames         \(rules.ignoreNames.isEmpty ? "-" : rules.ignoreNames.joined(separator: ", "))")
+    }
+    if issues.isEmpty {
+        print("검증                문제 없음")
+    } else {
+        print("검증 경고:")
+        for issue in issues {
+            print("  - \(issue)")
+        }
+    }
+    return CLIExitCode.success
+}
+
+func runRulesValidate(_ arguments: Arguments) throws -> Int32 {
+    let url: URL
+    if arguments.positionals.count >= 2 {
+        url = URL(fileURLWithPath: arguments.positionals[1])
+    } else {
+        url = AgentRules.standardURL()
+    }
+    let loaded = AgentRules.load(from: url)
+    switch loaded {
+    case let .loaded(rules, _):
+        let issues = rules.validationIssues()
+        if issues.isEmpty {
+            print("유효함: \(url.path)")
+            return CLIExitCode.success
+        }
+        printError("검증 실패: \(url.path)")
+        for issue in issues {
+            printError("  - \(issue)")
+        }
+        return CLIExitCode.failure
+    case .absent:
+        printError("파일이 없습니다: \(url.path)")
+        return CLIExitCode.failure
+    case let .invalid(_, reason):
+        printError("손상: \(url.path)")
+        printError(reason)
+        return CLIExitCode.failure
+    }
+}
+
+func runRulesInit() throws -> Int32 {
+    let url = AgentRules.standardURL()
+    if FileManager.default.fileExists(atPath: url.path) {
+        printError("이미 있습니다: \(url.path)")
+        return CLIExitCode.failure
+    }
+    try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    let example: [String: Any] = [
+        "_comment": "Watchdog 사용자 규칙. agentNames에 없는 에이전트 CLI 이름을 추가합니다.",
+        "agentNames": ["my-agent"],
+        "packageMarkers": [["marker": "/@example/my-agent/", "agent": "my-agent"]],
+        "serviceSubcommands": [] as [String],
+        "sessionHosts": [] as [String],
+        "ignoreNames": [] as [String],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: example, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: url, options: .atomic)
+    print("만들었습니다: \(url.path)")
+    return CLIExitCode.success
+}
+
 func runAudit(_ arguments: Arguments) throws -> Int32 {
     guard let path = arguments.positionals.first else {
         throw CLIUsageError("audit에는 픽스처 파일이 필요합니다.")
@@ -915,6 +1204,7 @@ func runAudit(_ arguments: Arguments) throws -> Int32 {
 // MARK: - Entry point
 
 func main() async -> Int32 {
+    _ = activateUserRules()
     do {
         let arguments = try Arguments(Array(CommandLine.arguments.dropFirst()))
         if arguments.flags.contains("--version") {
@@ -934,6 +1224,7 @@ func main() async -> Int32 {
         case "doctor": return try await runDoctor(arguments)
         case "snapshot": return try runSnapshot(arguments)
         case "audit": return try runAudit(arguments)
+        case "rules": return try runRules(arguments)
         case "help": print(usageText); return CLIExitCode.success
         default:
             if let action = CLIAction(rawValue: command) {

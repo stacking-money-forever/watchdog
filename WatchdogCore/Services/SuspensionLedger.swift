@@ -15,14 +15,24 @@ struct SuspensionRecord: Codable, Hashable, Sendable {
     let executablePath: String
     let suspendedAt: Date
     let source: Source
+    /// Root identity token (`pid:start:uid`) when this stop is part of a
+    /// session-scoped auto-suspend. Absent in older ledger files.
+    var groupID: String?
 
-    init(identity: ProcessIdentity, executablePath: String, suspendedAt: Date, source: Source) {
+    init(
+        identity: ProcessIdentity,
+        executablePath: String,
+        suspendedAt: Date,
+        source: Source,
+        groupID: String? = nil
+    ) {
         pid = identity.pid
         startTimeMicroseconds = identity.startTimeMicroseconds
         userID = identity.userID
         self.executablePath = executablePath
         self.suspendedAt = suspendedAt
         self.source = source
+        self.groupID = groupID
     }
 
     var identity: ProcessIdentity {
@@ -107,6 +117,26 @@ final class SuspensionLedger: @unchecked Sendable {
         try mutate { records in
             records.removeAll { $0.identity == identity }
         }
+    }
+
+    func records(inGroup groupID: String) -> [SuspensionRecord] {
+        all().filter { $0.groupID == groupID }
+    }
+
+    @discardableResult
+    func removeGroup(_ groupID: String) throws -> [SuspensionRecord] {
+        try mutate { records in
+            records.removeAll { $0.groupID == groupID }
+        }
+    }
+
+    /// Other records sharing this identity's session group, if it is the root.
+    func groupCompanions(of identity: ProcessIdentity) -> [SuspensionRecord] {
+        guard let record = all().first(where: { $0.identity == identity }),
+              let groupID = record.groupID,
+              IdentityToken(identity).description == groupID
+        else { return [] }
+        return records(inGroup: groupID).filter { $0.identity != identity }
     }
 
     /// Drops entries whose process exited, was replaced (PID reuse), or is no

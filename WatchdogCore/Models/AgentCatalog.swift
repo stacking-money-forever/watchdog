@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// Recognises coding-agent CLIs from what a process was launched as.
 ///
@@ -6,55 +7,198 @@ import Foundation
 /// npm/pip installs run under an interpreter, so argv[0] is `node` or
 /// `python3` and the agent is only visible in the script argument
 /// (`node …/@google/gemini-cli/bundle/gemini.js`).
-enum AgentCatalog {
+struct AgentCatalog: Sendable {
     /// Executable (or script) base names that are coding agents.
-    static let commandNames: Set<String> = [
-        "aider",
-        "amp",
-        "claude",
-        "codex",
-        "copilot",
-        "crush",
-        "cursor-agent",
-        "droid",
-        "gemini",
-        "gjc",
-        "goose",
-        "kimi",
-        "omp",
-        "opencode",
-        "pi",
-        "qwen",
-    ]
-
+    let commandNames: Set<String>
     /// Package directories whose entry script names something generic
     /// (`cli.js`, `index.js`), mapped to the agent they belong to.
-    private static let packageMarkers: [(marker: String, name: String)] = [
-        ("/@anthropic-ai/claude-code/", "claude"),
-        ("/@openai/codex/", "codex"),
-        ("/@google/gemini-cli/", "gemini"),
-        ("/@mariozechner/pi-coding-agent/", "pi"),
-        ("/@qwen-code/qwen-code/", "qwen"),
-        ("/opencode-ai/", "opencode"),
-        ("/@sourcegraph/amp/", "amp"),
-        ("/@github/copilot/", "copilot"),
-        ("/cursor-agent/", "cursor-agent"),
-    ]
-
+    let packageMarkers: [(marker: String, name: String)]
     /// Subcommands that mean the process is a resident server, not a session.
-    static let serviceSubcommands: Set<String> = [
-        "serve", "server", "app-server", "daemon", "worker-server",
-    ]
+    let serviceSubcommands: Set<String>
+    let sessionHostMarkers: [String]
+    let ignoreNames: Set<String>
+    private let interpreterNames: Set<String>
 
-    private static let interpreterNames: Set<String> = [
-        "node", "bun", "deno", "tsx", "python", "python3",
-    ]
+    static let builtIn = AgentCatalog(
+        commandNames: [
+            "aider",
+            "amp",
+            "claude",
+            "codex",
+            "copilot",
+            "crush",
+            "cursor-agent",
+            "droid",
+            "gemini",
+            "gjc",
+            "goose",
+            "kimi",
+            "omp",
+            "opencode",
+            "pi",
+            "qwen",
+        ],
+        packageMarkers: [
+            ("/@anthropic-ai/claude-code/", "claude"),
+            ("/@openai/codex/", "codex"),
+            ("/@google/gemini-cli/", "gemini"),
+            ("/@mariozechner/pi-coding-agent/", "pi"),
+            ("/@qwen-code/qwen-code/", "qwen"),
+            ("/opencode-ai/", "opencode"),
+            ("/@sourcegraph/amp/", "amp"),
+            ("/@github/copilot/", "copilot"),
+            ("/cursor-agent/", "cursor-agent"),
+        ],
+        serviceSubcommands: [
+            "serve", "server", "app-server", "daemon", "worker-server",
+        ],
+        sessionHostMarkers: [
+            "orca helper",
+            "terminal.app",
+            "iterm",
+            "wezterm",
+            "alacritty",
+            "kitty.app",
+            "/tmux",
+            "/zellij",
+            "muxy",
+            "visual studio code",
+            "vscode",
+            "code helper",
+            "electron",
+            "herdr",
+            "ghostty",
+            "warp",
+            "cmux",
+            "superset",
+            "zed.app",
+            "cursor.app",
+            "codex.app",
+            "claude.app",
+            "conductor.app",
+            "jetbrains",
+            "intellij",
+            "webstorm",
+            "pycharm",
+            "goland",
+            "phpstorm",
+            "android studio",
+            "/screen",
+            "/brgr",
+        ],
+        ignoreNames: [],
+        interpreterNames: [
+            "node", "bun", "deno", "tsx", "python", "python3",
+        ]
+    )
+
+    private static let lock = OSAllocatedUnfairLock(initialState: AgentCatalog.builtIn)
+
+    static var active: AgentCatalog {
+        lock.withLock { $0 }
+    }
+
+    static var commandNames: Set<String> { active.commandNames }
+    static var serviceSubcommands: Set<String> { active.serviceSubcommands }
+
+    static func activate(rules: AgentRules) {
+        lock.withLock { $0 = AgentCatalog(builtIn: .builtIn, merging: rules) }
+    }
+
+    static func resetToBuiltIn() {
+        lock.withLock { $0 = .builtIn }
+    }
+
+    init(builtIn: AgentCatalog, merging rules: AgentRules) {
+        var names = builtIn.commandNames
+        for name in rules.agentNames where !name.isEmpty {
+            names.insert(Self.baseName(name))
+        }
+        let ignored = Set(rules.ignoreNames.filter { !$0.isEmpty }.map(Self.baseName))
+        names.subtract(ignored)
+        commandNames = names
+        ignoreNames = ignored
+        interpreterNames = builtIn.interpreterNames
+        var markers = builtIn.packageMarkers
+        for marker in rules.packageMarkers where !marker.marker.isEmpty && !marker.agent.isEmpty {
+            markers.append((marker.marker.lowercased(), Self.baseName(marker.agent)))
+        }
+        packageMarkers = markers.filter { !ignored.contains($0.name) }
+        var subcommands = builtIn.serviceSubcommands
+        for value in rules.serviceSubcommands where !value.isEmpty {
+            subcommands.insert(value.lowercased())
+        }
+        serviceSubcommands = subcommands
+        sessionHostMarkers = builtIn.sessionHostMarkers + rules.sessionHosts
+            .filter { !$0.isEmpty }
+            .map { $0.lowercased() }
+    }
+
+    private init(
+        commandNames: Set<String>,
+        packageMarkers: [(marker: String, name: String)],
+        serviceSubcommands: Set<String>,
+        sessionHostMarkers: [String],
+        ignoreNames: Set<String>,
+        interpreterNames: Set<String>
+    ) {
+        self.commandNames = commandNames
+        self.packageMarkers = packageMarkers
+        self.serviceSubcommands = serviceSubcommands
+        self.sessionHostMarkers = sessionHostMarkers
+        self.ignoreNames = ignoreNames
+        self.interpreterNames = interpreterNames
+    }
+
+    func isInterpreter(_ command: String) -> Bool {
+        let name = Self.baseName(command)
+        if interpreterNames.contains(name) { return true }
+        return name.hasPrefix("python3.") && name.dropFirst("python3.".count).allSatisfy(\.isNumber)
+    }
+
+    func isSessionHost(_ snapshot: ProcessSnapshot) -> Bool {
+        let value = snapshot.executablePath.lowercased()
+        return sessionHostMarkers.contains { value.contains($0) }
+    }
+
+    func isIgnored(_ name: String) -> Bool {
+        ignoreNames.contains(Self.baseName(name))
+    }
+
+    /// The agent's name, or nil when the process is not a known coding agent.
+    func agentName(command: String, launchScript: String?) -> String? {
+        if isInterpreter(command) {
+            return launchScript.flatMap(interpretedAgentName)
+        }
+        if command.lowercased().contains(".app/contents/") {
+            return nil
+        }
+        let name = Self.baseName(command)
+        if ignoreNames.contains(name) { return nil }
+        return commandNames.contains(name) ? name : nil
+    }
+
+    private func interpretedAgentName(_ launchScript: String) -> String? {
+        let lowercaseScript = launchScript.lowercased()
+        for (marker, agent) in packageMarkers where lowercaseScript.contains(marker) {
+            if ignoreNames.contains(agent) { continue }
+            return agent
+        }
+        let scriptName = Self.scriptBaseName(launchScript)
+        if ignoreNames.contains(scriptName) { return nil }
+        return commandNames.contains(scriptName) ? scriptName : nil
+    }
 
     static func isInterpreter(_ command: String) -> Bool {
-        let name = baseName(command)
-        if interpreterNames.contains(name) { return true }
-        // python3.12, python3.13, …
-        return name.hasPrefix("python3.") && name.dropFirst("python3.".count).allSatisfy(\.isNumber)
+        active.isInterpreter(command)
+    }
+
+    static func isSessionHost(_ snapshot: ProcessSnapshot) -> Bool {
+        active.isSessionHost(snapshot)
+    }
+
+    static func agentName(command: String, launchScript: String?) -> String? {
+        active.agentName(command: command, launchScript: launchScript)
     }
 
     /// The script or module an interpreter runs: the first argument that is
@@ -101,41 +245,19 @@ enum AgentCatalog {
         return next.hasPrefix("-") ? nil : next
     }
 
-    /// The agent's name, or nil when the process is not a known coding agent.
-    static func agentName(command: String, launchScript: String?) -> String? {
-        // Checked first: framework Python (Apple's and Homebrew's) runs as
-        // `…/Python.app/Contents/MacOS/Python`, which is not an app process.
-        if isInterpreter(command) {
-            return launchScript.flatMap(interpretedAgentName)
-        }
-        // Anything else inside an app bundle belongs to that app: the desktop
-        // app itself (`Claude.app/Contents/MacOS/Claude`) or a backend it
-        // manages (`ChatGPT.app/Contents/Resources/codex`), not a CLI session.
-        if command.lowercased().contains(".app/contents/") {
-            return nil
-        }
-        let name = baseName(command)
-        return commandNames.contains(name) ? name : nil
-    }
-
-    private static func interpretedAgentName(_ launchScript: String) -> String? {
-        let lowercaseScript = launchScript.lowercased()
-        for (marker, agent) in packageMarkers where lowercaseScript.contains(marker) {
-            return agent
-        }
+    static func scriptBaseName(_ launchScript: String) -> String {
         var scriptName = baseName(launchScript)
         for suffix in [".js", ".mjs", ".cjs", ".ts", ".py"] where scriptName.hasSuffix(suffix) {
             scriptName.removeLast(suffix.count)
             break
         }
-        // `python3 -m aider.main` names a module path.
         if let module = scriptName.split(separator: ".").first {
             scriptName = String(module)
         }
-        return commandNames.contains(scriptName) ? scriptName : nil
+        return scriptName
     }
 
-    private static func baseName(_ path: String) -> String {
+    static func baseName(_ path: String) -> String {
         let name = path.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? path
         return name.lowercased()
     }
