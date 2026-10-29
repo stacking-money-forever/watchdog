@@ -3,6 +3,11 @@ import XCTest
 @testable import Watchdog
 
 final class OrphanClassifierTests: XCTestCase {
+    override func tearDown() {
+        AgentCatalog.resetToBuiltIn()
+        super.tearDown()
+    }
+
     func testAgentUnderSessionHostHasNoOrphanReason() throws {
         let orca = snapshot(pid: 100, parent: 1, name: "/Applications/Orca.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper")
         let login = snapshot(pid: 101, parent: 100, name: "/usr/bin/login")
@@ -230,6 +235,58 @@ final class OrphanClassifierTests: XCTestCase {
 
         XCTAssertEqual(result.kind, .service)
         XCTAssertNil(result.orphanReason)
+    }
+
+    func testSuspectedInterpreterUnderHostedShell() throws {
+        let herdr = snapshot(pid: 10, parent: 1, name: "/opt/homebrew/opt/herdr/bin/herdr")
+        let shell = snapshot(pid: 11, parent: 10, name: "/bin/zsh", tty: "ttys001")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node", tty: "ttys001")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [herdr, shell, node])
+
+        XCTAssertEqual(result.kind, .agent)
+        XCTAssertEqual(result.agentConfidence, .suspected)
+        XCTAssertEqual(result.agentName, "newagent")
+        XCTAssertFalse(MonitorEngine.isAutoSuspendEligible(result))
+        let sessions = SessionAggregator.sessions(from: OrphanClassifier.classify([herdr, shell, node]))
+        XCTAssertFalse(sessions.contains { $0.rootPID == node.id })
+    }
+
+    func testSuspectedRequiresTTY() throws {
+        let herdr = snapshot(pid: 10, parent: 1, name: "/opt/homebrew/opt/herdr/bin/herdr")
+        let shell = snapshot(pid: 11, parent: 10, name: "/bin/zsh")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [herdr, shell, node])
+        XCTAssertNotEqual(result.agentConfidence, .suspected)
+        XCTAssertNil(result.agentName)
+        XCTAssertNotEqual(result.kind, .agent)
+    }
+
+    func testSuspectedRequiresHostedParentChain() throws {
+        let launchd = snapshot(pid: 1, parent: 0, name: "/sbin/launchd")
+        let shell = snapshot(pid: 11, parent: 1, name: "/bin/zsh", tty: "ttys001")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node", tty: "ttys001")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [launchd, shell, node])
+        XCTAssertNotEqual(result.agentConfidence, .suspected)
+        XCTAssertNotEqual(result.kind, .agent)
+    }
+
+    func testSuspectedHonoursIgnoreNames() throws {
+        AgentCatalog.activate(rules: AgentRules(ignoreNames: ["newagent"]))
+        defer { AgentCatalog.resetToBuiltIn() }
+        let herdr = snapshot(pid: 10, parent: 1, name: "/opt/homebrew/opt/herdr/bin/herdr")
+        let shell = snapshot(pid: 11, parent: 10, name: "/bin/zsh", tty: "ttys001")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node", tty: "ttys001")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [herdr, shell, node])
+        XCTAssertNotEqual(result.agentConfidence, .suspected)
+        XCTAssertNil(result.agentName)
     }
 
     func testClaudeWithTTYUnderLaunchdStaysAgentOrphan() throws {

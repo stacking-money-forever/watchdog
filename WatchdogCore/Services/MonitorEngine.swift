@@ -294,7 +294,10 @@ struct MonitorEngine: Sendable {
     /// Services stay resident by design (launchd daemons, `serve`/`app-server`);
     /// never auto-stop them.
     static func isAutoSuspendEligible(_ snapshot: ProcessSnapshot) -> Bool {
-        snapshot.kind == .agent && !snapshot.isProtected && !snapshot.isSuspended
+        snapshot.kind == .agent
+            && snapshot.agentConfidence != .suspected
+            && !snapshot.isProtected
+            && !snapshot.isSuspended
     }
 
     /// Stable order: orphans first, then CPU (bucketed to whole percent so

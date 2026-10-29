@@ -88,6 +88,30 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertNil(AgentCatalog.launchSubcommand(arguments: ["claude", "--resume", "x"]))
     }
 
+    func testMergedCatalogRecognisesUserAgentName() {
+        let catalog = AgentCatalog(
+            builtIn: .builtIn,
+            merging: AgentRules(agentNames: ["fakeagent"])
+        )
+        XCTAssertEqual(catalog.agentName(command: "/tmp/bin/fakeagent", launchScript: nil), "fakeagent")
+        XCTAssertNil(AgentCatalog.builtIn.agentName(command: "/tmp/bin/fakeagent", launchScript: nil))
+    }
+
+    func testMergedCatalogDropsIgnoredBuiltInName() {
+        let catalog = AgentCatalog(
+            builtIn: .builtIn,
+            merging: AgentRules(ignoreNames: ["pi"])
+        )
+        XCTAssertNil(catalog.agentName(command: "pi", launchScript: nil))
+        XCTAssertNil(
+            catalog.agentName(
+                command: "node",
+                launchScript: "/n/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+            )
+        )
+        XCTAssertEqual(AgentCatalog.builtIn.agentName(command: "pi", launchScript: nil), "pi")
+    }
+
     func testSleepingProcessIsReportedAsSleeping() {
         XCTAssertEqual(LibprocProcessLister.stateLetter(UInt32(SRUN), runningThreads: 0), "S")
         XCTAssertEqual(LibprocProcessLister.stateLetter(UInt32(SRUN), runningThreads: 2), "R")

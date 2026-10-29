@@ -11,7 +11,9 @@ enum SessionAggregator {
         for snapshot in snapshots {
             // A session host (herdr, tmux, brgr) is never a session of its own;
             // AgentLineage does not attribute anything to it either.
-            if snapshot.kind == .agent || snapshot.kind == .service, !OrphanClassifier.isSessionHost(snapshot) {
+            if snapshot.kind == .agent || snapshot.kind == .service,
+               snapshot.agentConfidence != .suspected,
+               !OrphanClassifier.isSessionHost(snapshot) {
                 roots.append(snapshot)
             } else if let ancestorPID = snapshot.agentAncestor?.pid {
                 membersByRoot[ancestorPID, default: []].append(snapshot)

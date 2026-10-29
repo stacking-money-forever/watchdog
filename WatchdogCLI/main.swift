@@ -21,6 +21,12 @@ let usageText = """
       Watchdog(앱·CLI)이 일시 정지한 채 멈춰 있는 프로세스를 보여 줍니다.
   doctor [--json]
       샘플링 비용과 환경을 진단합니다.
+  rules show [--json]
+      사용자 규칙 파일 경로와 적용 내용, 검증 경고를 보여 줍니다.
+  rules validate [FILE]
+      규칙 파일을 읽어 검증합니다. 문제가 있으면 종료 코드 1입니다.
+  rules init
+      표준 경로에 예시 규칙 파일을 만듭니다. 이미 있으면 거부합니다.
   snapshot [--out FILE]
       현재 프로세스 목록을 분류 정확도 픽스처와 같은 JSON으로 저장합니다. --out이 없으면 표준 출력입니다.
   audit FIXTURE [--labels FILE] [--json]
@@ -114,6 +120,34 @@ func pad(_ text: String, _ width: Int) -> String {
     let count = text.count
     if count >= width { return String(text.prefix(width)) }
     return text + String(repeating: " ", count: width - count)
+}
+
+func inspectKindText(_ process: ProcessSnapshot) -> String {
+    if process.agentConfidence == .suspected { return "에이전트(추정)" }
+    if process.kind == .service { return "서비스" }
+    return process.kind.rawValue
+}
+
+func activateUserRules() -> AgentRules.LoadResult {
+    let loaded = AgentRules.load(from: AgentRules.standardURL())
+    switch loaded {
+    case let .loaded(rules, _):
+        AgentCatalog.activate(rules: rules)
+    case .absent, .invalid:
+        AgentCatalog.resetToBuiltIn()
+    }
+    return loaded
+}
+
+func rulesStatusLine(_ loaded: AgentRules.LoadResult) -> String {
+    switch loaded {
+    case let .loaded(rules, _):
+        return "\(rules.appliedCount)개 규칙 적용"
+    case .absent:
+        return "없음"
+    case let .invalid(_, reason):
+        return "손상(\(reason))"
+    }
 }
 
 struct ProcessRecord: Encodable {
@@ -243,6 +277,7 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
         if process.cpuPercent >= settings.cpuThreshold { flags.append("cpu") }
         if process.residentBytes >= settings.memoryThresholdBytes { flags.append("memory") }
         if process.suspectedOrphan { flags.append("orphan") }
+        if process.agentConfidence == .suspected { flags.append("suspected") }
         if let ancestor = process.agentAncestor { flags.append("via:\(ancestor.name)#\(ancestor.pid)") }
         if stopped.contains(process.identity) { flags.append("stopped-by-watchdog") }
         if process.isProtected { flags.append("protected") }
@@ -349,6 +384,7 @@ func runSessions(_ arguments: Arguments) async throws -> Int32 {
         var flags: [String] = []
         if session.isSuspended { flags.append("suspended") }
         if byIdentity[session.id]?.suspectedOrphan == true { flags.append("orphan") }
+        if byIdentity[session.id]?.agentConfidence == .suspected { flags.append("suspected") }
         if session.kind == .service { flags.append("service") }
         print(
             pad(IdentityToken(session.id).description, 30)
@@ -396,7 +432,7 @@ func runInspect(_ arguments: Arguments) async throws -> Int32 {
         ("이름", process.displayName),
         ("경로(argv0)", process.executablePath),
         ("실행 스크립트", process.launchScript ?? "-"),
-        ("종류", process.kind == .service ? "서비스" : process.kind.rawValue),
+        ("종류", inspectKindText(process)),
         ("PID / PPID / PGID", "\(process.id) / \(process.parentPID) / \(process.processGroupID)"),
         ("UID", "\(process.userID)"),
         ("상태", process.state + (process.isSuspended ? " (정지됨)" : "")),
@@ -745,6 +781,8 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
         var loginItemStatus: String?
         var loginItemOptedOut: Bool
         var loginItemLastError: String?
+        var rulesPath: String
+        var rulesStatus: String
         var problems: [String] = []
     }
     let clock = ContinuousClock()
@@ -761,8 +799,15 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
         ],
         autoSuspendEnabled: settings.autoSuspendEnabled,
         appRunning: false,
-        loginItemOptedOut: false
+        loginItemOptedOut: false,
+        rulesPath: AgentRules.standardURL().path,
+        rulesStatus: ""
     )
+    let rulesLoad = AgentRules.load(from: AgentRules.standardURL())
+    report.rulesStatus = rulesStatusLine(rulesLoad)
+    if case let .invalid(_, reason) = rulesLoad {
+        report.problems.append("사용자 규칙 손상: \(reason)")
+    }
     // The app records what SMAppService last told it; the CLI cannot ask on
     // the app's behalf (the status is resolved for the calling process).
     let appDefaults = UserDefaults(suiteName: MonitorSettings.defaultsSuiteName) ?? .standard
@@ -830,6 +875,7 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
     }
     print("로그인 시 실행     \(loginLine)")
     print("정지 기록          \(report.ledgerEntries)개 · \(report.ledgerPath)")
+    print("사용자 규칙        \(report.rulesStatus) · \(report.rulesPath)")
     print(report.problems.isEmpty ? "문제 없음" : "확인 필요:\n" + report.problems.map { "  - \($0)" }.joined(separator: "\n"))
     return CLIExitCode.success
 }
@@ -882,6 +928,132 @@ func runSnapshot(_ arguments: Arguments) throws -> Int32 {
     return CLIExitCode.success
 }
 
+func runRules(_ arguments: Arguments) throws -> Int32 {
+    guard let subcommand = arguments.positionals.first else {
+        throw CLIUsageError("rules에는 show, validate, init 중 하나가 필요합니다.")
+    }
+    switch subcommand {
+    case "show": return try runRulesShow(arguments)
+    case "validate": return try runRulesValidate(arguments)
+    case "init": return try runRulesInit()
+    default:
+        throw CLIUsageError("알 수 없는 rules 명령: \(subcommand)")
+    }
+}
+
+func runRulesShow(_ arguments: Arguments) throws -> Int32 {
+    let url = AgentRules.standardURL()
+    let loaded = AgentRules.load(from: url)
+    let rules: AgentRules?
+    let issues: [String]
+    switch loaded {
+    case let .loaded(value, _):
+        rules = value
+        issues = value.validationIssues()
+    case .absent, .invalid:
+        rules = nil
+        issues = []
+    }
+    if arguments.json {
+        struct Report: Encodable {
+            let path: String
+            let status: String
+            let reason: String?
+            let rules: AgentRules?
+            let validationIssues: [String]
+            let appliedCount: Int
+        }
+        let reason: String?
+        if case let .invalid(_, text) = loaded { reason = text } else { reason = nil }
+        emitJSON(
+            Report(
+                path: url.path,
+                status: rulesStatusLine(loaded),
+                reason: reason,
+                rules: rules,
+                validationIssues: issues,
+                appliedCount: rules?.appliedCount ?? 0
+            )
+        )
+        return CLIExitCode.success
+    }
+    print("경로                \(url.path)")
+    print("상태                \(rulesStatusLine(loaded))")
+    if case let .invalid(_, reason) = loaded {
+        print("이유                \(reason)")
+    }
+    if let rules {
+        print("agentNames          \(rules.agentNames.isEmpty ? "-" : rules.agentNames.joined(separator: ", "))")
+        print("packageMarkers      \(rules.packageMarkers.isEmpty ? "-" : rules.packageMarkers.map { "\($0.marker) → \($0.agent)" }.joined(separator: ", "))")
+        print("serviceSubcommands  \(rules.serviceSubcommands.isEmpty ? "-" : rules.serviceSubcommands.joined(separator: ", "))")
+        print("sessionHosts        \(rules.sessionHosts.isEmpty ? "-" : rules.sessionHosts.joined(separator: ", "))")
+        print("ignoreNames         \(rules.ignoreNames.isEmpty ? "-" : rules.ignoreNames.joined(separator: ", "))")
+    }
+    if issues.isEmpty {
+        print("검증                문제 없음")
+    } else {
+        print("검증 경고:")
+        for issue in issues {
+            print("  - \(issue)")
+        }
+    }
+    return CLIExitCode.success
+}
+
+func runRulesValidate(_ arguments: Arguments) throws -> Int32 {
+    let url: URL
+    if arguments.positionals.count >= 2 {
+        url = URL(fileURLWithPath: arguments.positionals[1])
+    } else {
+        url = AgentRules.standardURL()
+    }
+    let loaded = AgentRules.load(from: url)
+    switch loaded {
+    case let .loaded(rules, _):
+        let issues = rules.validationIssues()
+        if issues.isEmpty {
+            print("유효함: \(url.path)")
+            return CLIExitCode.success
+        }
+        printError("검증 실패: \(url.path)")
+        for issue in issues {
+            printError("  - \(issue)")
+        }
+        return CLIExitCode.failure
+    case .absent:
+        printError("파일이 없습니다: \(url.path)")
+        return CLIExitCode.failure
+    case let .invalid(_, reason):
+        printError("손상: \(url.path)")
+        printError(reason)
+        return CLIExitCode.failure
+    }
+}
+
+func runRulesInit() throws -> Int32 {
+    let url = AgentRules.standardURL()
+    if FileManager.default.fileExists(atPath: url.path) {
+        printError("이미 있습니다: \(url.path)")
+        return CLIExitCode.failure
+    }
+    try FileManager.default.createDirectory(
+        at: url.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+    )
+    let example: [String: Any] = [
+        "_comment": "Watchdog 사용자 규칙. agentNames에 없는 에이전트 CLI 이름을 추가합니다.",
+        "agentNames": ["my-agent"],
+        "packageMarkers": [["marker": "/@example/my-agent/", "agent": "my-agent"]],
+        "serviceSubcommands": [] as [String],
+        "sessionHosts": [] as [String],
+        "ignoreNames": [] as [String],
+    ]
+    let data = try JSONSerialization.data(withJSONObject: example, options: [.prettyPrinted, .sortedKeys])
+    try data.write(to: url, options: .atomic)
+    print("만들었습니다: \(url.path)")
+    return CLIExitCode.success
+}
+
 func runAudit(_ arguments: Arguments) throws -> Int32 {
     guard let path = arguments.positionals.first else {
         throw CLIUsageError("audit에는 픽스처 파일이 필요합니다.")
@@ -915,6 +1087,7 @@ func runAudit(_ arguments: Arguments) throws -> Int32 {
 // MARK: - Entry point
 
 func main() async -> Int32 {
+    _ = activateUserRules()
     do {
         let arguments = try Arguments(Array(CommandLine.arguments.dropFirst()))
         if arguments.flags.contains("--version") {
@@ -934,6 +1107,7 @@ func main() async -> Int32 {
         case "doctor": return try await runDoctor(arguments)
         case "snapshot": return try runSnapshot(arguments)
         case "audit": return try runAudit(arguments)
+        case "rules": return try runRules(arguments)
         case "help": print(usageText); return CLIExitCode.success
         default:
             if let action = CLIAction(rawValue: command) {

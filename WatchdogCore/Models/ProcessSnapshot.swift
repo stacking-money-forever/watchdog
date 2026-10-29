@@ -10,6 +10,11 @@ enum ProcessKind: String, Equatable, Sendable {
     case other
 }
 
+enum AgentConfidence: String, Equatable, Sendable {
+    case known
+    case suspected
+}
+
 struct ProcessIdentity: Hashable, Sendable {
     let pid: Int32
     let startTimeMicroseconds: UInt64
@@ -102,6 +107,12 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
     /// The nearest coding agent this process descends from, when it is not
     /// an agent itself: a build, test run, or MCP server the agent started.
     var agentAncestor: AgentAncestor? = nil
+    /// Set by `OrphanClassifier` when parent information is available.
+    var agentConfidence: AgentConfidence? = nil
+    /// Filled for suspected agents so `agentName` can show the script basename.
+    var classifiedAgentName: String? = nil
+    /// When set, `kind` prefers this over the computed classification.
+    var classifiedKind: ProcessKind? = nil
 
     var identity: ProcessIdentity {
         ProcessIdentity(
@@ -138,7 +149,7 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
 
     /// The coding agent this process is, if any.
     var agentName: String? {
-        AgentCatalog.agentName(command: executablePath, launchScript: launchScript)
+        classifiedAgentName ?? AgentCatalog.agentName(command: executablePath, launchScript: launchScript)
     }
 
     /// `Aside Helper (Renderer)` → `Aside`: a Chromium/Electron renderer.
@@ -150,6 +161,8 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
     }
 
     var kind: ProcessKind {
+        if let classifiedKind { return classifiedKind }
+
         let lowercasePath = executablePath.lowercased()
 
         if executablePath.contains("Helper (Renderer)") {
@@ -167,7 +180,7 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
             return .service
         }
 
-        if agentName != nil {
+        if agentName != nil || agentConfidence == .suspected {
             return .agent
         }
 

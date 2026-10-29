@@ -19,6 +19,7 @@ done
 work="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-cli-e2e.XXXXXX")"
 derived_data="${derived_data:-$work/DerivedData}"
 export WATCHDOG_LEDGER_PATH="$work/ledger/suspensions.json"
+export WATCHDOG_RULES_PATH="$work/absent-rules.json"
 
 spawned=()
 cleanup() {
@@ -228,6 +229,30 @@ check "temp leftover.sh is an other orphan" /usr/bin/python3 -c \
   'import json,sys; pid=int(sys.argv[2]); rows=[p for p in json.loads(sys.argv[1]) if p["pid"]==pid]; sys.exit(not (rows and rows[0]["kind"]=="other" and "orphan" in rows[0]["flags"] and rows[0].get("orphanReason")=="temporaryLaunchPath"))' \
   "$leftover_json" "$leftover_pid"
 kill -TERM "$http_pid" "$leftover_pid" 2>/dev/null || true
+
+echo "Rules"
+export WATCHDOG_RULES_PATH="$work/rules.json"
+check "rules init creates the file" expect_exit 0 "$cli" rules init
+check "rules init refuses an existing file" expect_exit 1 "$cli" rules init
+cat >"$work/rules.json" <<'EOF'
+{"agentNames":["fakeagent"]}
+EOF
+mkdir -p "$work/bin"
+# A shebang wrapper shows up as `/bin/sh`. Point a sleep symlink at the
+# agent name so argv[0] is fakeagent (same pattern as the claude burner).
+ln -sf /bin/sleep "$work/bin/fakeagent"
+"$work/bin/fakeagent" 60 >/dev/null &
+fakeagent_pid=$!
+spawned+=("$fakeagent_pid")
+check "user-named fakeagent is listed as an agent" wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","agents","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row and row.get("kind")=="agent" and row.get("name")=="fakeagent" else 1)' "$fakeagent_pid" "$cli"
+kill -TERM "$fakeagent_pid" 2>/dev/null || true
+printf '{' >"$work/rules.json"
+check "corrupt rules make doctor report damage" expect_exit 0 "$cli" doctor
+check "doctor names 손상" grep -q '손상' "$work/last.out"
+check "rules validate rejects corrupt JSON" expect_exit 1 "$cli" rules validate
+check "audit fixture stays clean with user rules path set" expect_exit 0 \
+  "$cli" audit "$repo_root/WatchdogTests/Fixtures/mac-20261030.json" \
+  --labels "$repo_root/WatchdogTests/Fixtures/mac-20261030.labels.json"
 
 echo "Audit"
 check "snapshot --out writes a file" expect_exit 0 "$cli" snapshot --out "$work/snap.json"

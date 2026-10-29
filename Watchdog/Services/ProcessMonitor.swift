@@ -93,6 +93,7 @@ final class ProcessMonitor: ObservableObject {
 
     /// Processes Watchdog itself stopped and that are still stopped.
     @Published private(set) var watchdogSuspended: [SuspensionRecord] = []
+    @Published var rulesStatus: AgentRules.LoadResult = .absent(AgentRules.standardURL())
 
     /// True while the menu is on screen. Rows then keep their positions across
     /// refreshes so a click can never land on a process that moved under the
