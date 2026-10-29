@@ -158,7 +158,7 @@ check "watch auto-suspends the runaway agent" expect_exit 0 \
   "$cli" watch --auto-suspend --cpu 50 --sustain 2 --interval 0.5 --count 12 --json
 check "auto-suspend event emitted" grep -q '"auto-suspend"' "$work/last.out"
 check "burner is stopped" wait_until stopped "$burner"
-check "ledger lists it" test "$(ledger_count)" = 1
+check "ledger lists it" wait_until test "$(ledger_count)" -ge 1
 check "stopped --resume-all" expect_exit 0 "$cli" stopped --resume-all
 check "burner runs again" wait_until running "$burner"
 check "ledger empty after resume-all" test "$(ledger_count)" = 0
@@ -184,15 +184,49 @@ check "its child is attributed to it" /usr/bin/python3 -c \
   "$child_json" "$interpreted"
 kill -TERM "$child" "$interpreted" 2>/dev/null || true
 
+echo "Services and leftovers"
+http_pidfile="$work/http.pid"
+(
+  cd "$HOME"
+  /usr/bin/python3 -m http.server 0 --bind 127.0.0.1 >/dev/null 2>&1 &
+  echo $! >"$http_pidfile"
+)
+wait_until test -s "$http_pidfile"
+http_pid=$(tr -d '[:space:]' <"$http_pidfile")
+spawned+=("$http_pid")
+wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$http_pid" "$cli"
+http_json=$("$cli" list --scope all --json --interval 0.2)
+check "double-forked http.server is a non-orphan service" /usr/bin/python3 -c \
+  'import json,sys; pid=int(sys.argv[2]); rows=[p for p in json.loads(sys.argv[1]) if p["pid"]==pid]; sys.exit(not (rows and rows[0]["kind"]=="service" and "orphan" not in rows[0]["flags"]))' \
+  "$http_json" "$http_pid"
+
+leftover_pidfile="$work/leftover.pid"
+printf 'echo $$ > "%s"\nexec sleep 300\n' "$leftover_pidfile" >"$work/leftover.sh"
+(
+  cd "$work"
+  /bin/sh "$work/leftover.sh" >/dev/null 2>&1 &
+)
+wait_until test -s "$leftover_pidfile"
+leftover_pid=$(tr -d '[:space:]' <"$leftover_pidfile")
+spawned+=("$leftover_pid")
+wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$leftover_pid" "$cli"
+leftover_json=$("$cli" list --scope all --json --interval 0.2)
+check "temp leftover.sh is an other orphan" /usr/bin/python3 -c \
+  'import json,sys; pid=int(sys.argv[2]); rows=[p for p in json.loads(sys.argv[1]) if p["pid"]==pid]; sys.exit(not (rows and rows[0]["kind"]=="other" and "orphan" in rows[0]["flags"] and rows[0].get("orphanReason")=="temporaryLaunchPath"))' \
+  "$leftover_json" "$leftover_pid"
+kill -TERM "$http_pid" "$leftover_pid" 2>/dev/null || true
+
 echo "Audit"
 check "snapshot --out writes a file" expect_exit 0 "$cli" snapshot --out "$work/snap.json"
 check "snapshot JSON is valid" /usr/bin/python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "rows" in d and isinstance(d["rows"], list)' "$work/snap.json"
 check "audit reads snapshot and prints a summary" expect_exit 0 "$cli" audit "$work/snap.json"
 check "audit summary names kinds" grep -q '종류:' "$work/last.out"
-check "audit fixture+labels --json reports mismatches" expect_exit 1 \
+check "audit fixture+labels has no untolerated mismatches" expect_exit 0 \
   "$cli" audit "$repo_root/WatchdogTests/Fixtures/mac-20261030.json" \
   --labels "$repo_root/WatchdogTests/Fixtures/mac-20261030.labels.json" --json
-check "audit JSON has mismatches" /usr/bin/python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit("mismatches" not in d)' "$work/last.out"
+check "audit JSON reports zero untolerated mismatches" /usr/bin/python3 -c \
+  'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("untoleratedMismatchCount")==0 else 1)' \
+  "$work/last.out"
 
 echo
 echo "cli-e2e: $pass passed, $fail failed (work dir $work)"

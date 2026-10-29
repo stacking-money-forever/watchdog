@@ -145,6 +145,25 @@ final class MonitorEngineTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.id), [9_050, 9_051])
     }
 
+    func testCarriedTemporaryWorkingDirectoryMarksOrphanOnNextSample() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let process = snapshot(
+            pid: 9_070,
+            path: "/Users/test/Library/Application Support/brgr/bin/brgr",
+            parent: 1,
+            tty: "??"
+        )
+
+        let first = engine.ingest([process], settings: settings, at: start)
+        XCTAssertNil(first.processes.first?.orphanReason)
+
+        engine.recordWorkingDirectory("/private/var/folders/x/T/.tmpX", for: process.identity)
+        let second = engine.ingest([process], settings: settings, at: start.advanced(by: .seconds(2)))
+        XCTAssertEqual(second.processes.first?.orphanReason, .temporaryLaunchPath)
+        XCTAssertEqual(second.processes.first?.kind, .other)
+    }
+
     func testSamplingFailureResetsEvidencePerSafetyContract() {
         var engine = MonitorEngine()
         let start = ContinuousClock().now
@@ -168,14 +187,16 @@ final class MonitorEngineTests: XCTestCase {
         path: String,
         cpu: Double = 0,
         memoryGB: UInt64 = 0,
-        state: String = "R"
+        state: String = "R",
+        parent: Int32 = 600,
+        tty: String = "ttys001"
     ) -> ProcessSnapshot {
         ProcessSnapshot(
             id: pid,
-            parentPID: 600,
+            parentPID: parent,
             processGroupID: pid,
             userID: getuid(),
-            tty: "ttys001",
+            tty: tty,
             cpuPercent: cpu,
             residentBytes: memoryGB * 1_024 * 1_024 * 1_024,
             state: state,

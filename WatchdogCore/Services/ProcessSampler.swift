@@ -157,7 +157,12 @@ actor WorkingDirectoryResolver {
             $0.key >= generation || generation - $0.key < 64
         }
 
-        for snapshot in snapshots where snapshot.kind == .agent {
+        // Agents need their project directory; headless roots (services and
+        // reparented leftovers) need it for the temporary-path orphan rule,
+        // so the app sees the same verdicts as the CLI.
+        for snapshot in snapshots where snapshot.kind == .agent
+            || snapshot.kind == .service
+            || (snapshot.parentPID <= 1 && snapshot.kind == .other) {
             let identity = snapshot.identity
             guard seen.insert(identity).inserted else { continue }
 

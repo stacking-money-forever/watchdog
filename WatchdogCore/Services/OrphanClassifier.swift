@@ -12,27 +12,35 @@ enum OrphanClassifier {
         var lineage = AgentLineage(byPID: byPID)
         return snapshots.map { snapshot in
             var updated = snapshot
-            if snapshot.kind == .agent {
+            // System daemons and apps routinely keep a cwd under /var/folders;
+            // only a session-like process left behind in a temp dir is a leftover.
+            if snapshot.parentPID <= 1,
+               [.agent, .service, .other].contains(snapshot.kind),
+               LaunchPath.isTemporaryLaunch(of: snapshot) {
+                updated.orphanReason = .temporaryLaunchPath
+            } else if snapshot.kind == .agent {
                 updated.orphanReason = orphanReason(snapshot, in: byPID)
-            } else {
+            }
+            if snapshot.kind != .agent {
                 updated.agentAncestor = lineage.ancestor(of: snapshot)
             }
             return updated
         }
     }
 
-    /// Finds the nearest agent above a non-agent process, so a runaway build
-    /// or test run is attributed to the agent (and project) that started it.
-    /// Siblings share ancestors, so each process's answer is computed once.
+    /// Finds the nearest agent or service above a non-agent process, so a
+    /// runaway build, test run, or MCP server is attributed to the session
+    /// that started it. Siblings share ancestors, so each answer is computed once.
     private struct AgentLineage {
         let byPID: [Int32: ProcessSnapshot]
-        private var agents: [Int32: String] = [:]
+        private var roots: [Int32: String] = [:]
         private var memo: [Int32: AgentAncestor?] = [:]
 
         init(byPID: [Int32: ProcessSnapshot]) {
             self.byPID = byPID
-            for (pid, snapshot) in byPID where snapshot.kind == .agent {
-                agents[pid] = snapshot.agentName
+            for (pid, snapshot) in byPID where snapshot.kind == .agent || snapshot.kind == .service {
+                roots[pid] = snapshot.agentName
+                    ?? URL(fileURLWithPath: snapshot.executablePath).lastPathComponent
             }
         }
 
@@ -49,7 +57,7 @@ enum OrphanClassifier {
                       currentPID != snapshot.id,
                       let ancestor = byPID[currentPID]
                 else { break }
-                if let name = agents[currentPID] {
+                if let name = roots[currentPID] {
                     result = AgentAncestor(pid: currentPID, name: name, workingDirectory: ancestor.workingDirectory)
                     break
                 }
@@ -85,9 +93,9 @@ enum OrphanClassifier {
                 return .missingParent
             }
 
-            // A sub-agent started by a live agent (or by a host that runs
-            // agents headless) belongs to that session.
-            if isSessionHost(ancestor) || ancestor.kind == .agent {
+            // A sub-agent started by a live agent/service (or by a host that
+            // runs agents headless) belongs to that session.
+            if isSessionHost(ancestor) || ancestor.kind == .agent || ancestor.kind == .service {
                 return nil
             }
 

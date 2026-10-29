@@ -120,7 +120,7 @@ struct MonitorEngine: Sendable {
         settings: MonitorSettings,
         at instant: ContinuousClock.Instant
     ) -> MonitorUpdate {
-        var snapshots = OrphanClassifier.classify(rawSnapshots)
+        var snapshots = rawSnapshots
         let liveIdentities = Set(snapshots.map(\.identity))
 
         // A full enumeration that no longer contains an identity means that
@@ -129,22 +129,28 @@ struct MonitorEngine: Sendable {
         userResumed.formIntersection(liveIdentities)
         enrichment = enrichment.filter { liveIdentities.contains($0.key) }
 
-        // Carry enrichment across samples so the project name and worktree
-        // badge do not blink while the asynchronous lookups re-run.
+        // Working directory participates in temporary-path orphan detection,
+        // so carry it before classification. Worktree badges are display-only
+        // and merge afterwards.
         for index in snapshots.indices {
             guard let carried = enrichment[snapshots[index].identity] else { continue }
             if snapshots[index].workingDirectory == nil {
                 snapshots[index].workingDirectory = carried.workingDirectory
             }
+        }
+        snapshots = OrphanClassifier.classify(snapshots)
+        for index in snapshots.indices {
+            guard let carried = enrichment[snapshots[index].identity] else { continue }
             if snapshots[index].worktreeState == nil,
                carried.worktreeState?.path == snapshots[index].workingDirectory {
                 snapshots[index].worktreeState = carried.worktreeState
             }
         }
-        // Classification ran before enrichment; give descendants their
-        // agent's (carried) working directory so they show its project.
+        // Give descendants their agent's (carried) working directory so they
+        // show its project. Service roots are session roots too.
         let agentDirectories = Dictionary(
-            snapshots.lazy.filter { $0.kind == .agent }.map { ($0.id, $0.workingDirectory) },
+            snapshots.lazy.filter { $0.kind == .agent || $0.kind == .service }
+                .map { ($0.id, $0.workingDirectory) },
             uniquingKeysWith: { first, _ in first }
         )
         for index in snapshots.indices {
@@ -211,6 +217,8 @@ struct MonitorEngine: Sendable {
     /// Auto-suspend only stops a coding agent whose CPU stayed high. Memory
     /// alone never qualifies: SIGSTOP frees no memory, and it would freeze
     /// ordinary apps (Xcode, browsers) above the memory threshold.
+    /// Services stay resident by design (launchd daemons, `serve`/`app-server`);
+    /// never auto-stop them.
     static func isAutoSuspendEligible(_ snapshot: ProcessSnapshot) -> Bool {
         snapshot.kind == .agent && !snapshot.isProtected && !snapshot.isSuspended
     }

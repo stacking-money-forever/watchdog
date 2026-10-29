@@ -176,7 +176,14 @@ func sampleWithCPU(interval: Double) async throws -> [ProcessSnapshot] {
     _ = try await sampler.sample()
     try await Task.sleep(for: .milliseconds(Int(interval * 1_000)))
     let sample = try await sampler.sample()
-    return OrphanClassifier.classify(sample.processes)
+    var processes = sample.processes
+    // Temporary-path orphans need cwd (and leftover `/bin/sh $TMPDIR/…`
+    // scripts need it on the first list). Only ppid ≤ 1 is cheap enough:
+    // those are the processes the rule inspects.
+    for index in processes.indices where processes[index].parentPID <= 1 && processes[index].workingDirectory == nil {
+        processes[index].workingDirectory = WorkingDirectoryResolver.currentDirectory(pid: processes[index].id)
+    }
+    return OrphanClassifier.classify(processes)
 }
 
 // MARK: - Commands
@@ -211,7 +218,7 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
                     || stopped.contains($0.identity))
         }
     case "agents":
-        processes = processes.filter { $0.kind == .agent }
+        processes = processes.filter { $0.kind == .agent || ($0.kind == .service && $0.agentName != nil) }
     default:
         break
     }
@@ -297,7 +304,7 @@ func runInspect(_ arguments: Arguments) async throws -> Int32 {
         ("이름", process.displayName),
         ("경로(argv0)", process.executablePath),
         ("실행 스크립트", process.launchScript ?? "-"),
-        ("종류", process.kind.rawValue),
+        ("종류", process.kind == .service ? "서비스" : process.kind.rawValue),
         ("PID / PPID / PGID", "\(process.id) / \(process.parentPID) / \(process.processGroupID)"),
         ("UID", "\(process.userID)"),
         ("상태", process.state + (process.isSuspended ? " (정지됨)" : "")),

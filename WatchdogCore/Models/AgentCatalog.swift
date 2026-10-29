@@ -41,6 +41,11 @@ enum AgentCatalog {
         ("/cursor-agent/", "cursor-agent"),
     ]
 
+    /// Subcommands that mean the process is a resident server, not a session.
+    static let serviceSubcommands: Set<String> = [
+        "serve", "server", "app-server", "daemon", "worker-server",
+    ]
+
     private static let interpreterNames: Set<String> = [
         "node", "bun", "deno", "tsx", "python", "python3",
     ]
@@ -69,6 +74,31 @@ enum AgentCatalog {
             return argument
         }
         return nil
+    }
+
+    /// The first positional after argv[0], or after the interpreter script.
+    /// Flags do not count: `claude --resume x` has no subcommand. `-m module`
+    /// (as in `python3 -m http.server`) is not a subcommand either.
+    static func launchSubcommand(arguments: [String]) -> String? {
+        guard let command = arguments.first else { return nil }
+        let rest = Array(arguments.dropFirst())
+        if isInterpreter(command) {
+            var index = 0
+            while index < rest.count {
+                let argument = rest[index]
+                if argument == "-m" { return nil }
+                if argument == "run" || argument.hasPrefix("-") {
+                    index += 1
+                    continue
+                }
+                guard index + 1 < rest.count else { return nil }
+                let next = rest[index + 1]
+                return next.hasPrefix("-") ? nil : next
+            }
+            return nil
+        }
+        guard let next = rest.first else { return nil }
+        return next.hasPrefix("-") ? nil : next
     }
 
     /// The agent's name, or nil when the process is not a known coding agent.

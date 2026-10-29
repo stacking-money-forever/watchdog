@@ -336,7 +336,7 @@ final class ProcessMonitor: ObservableObject {
                     || stopped.contains($0.identity))
             }
         case .agents:
-            scoped = processes.filter { $0.kind == .agent }
+            scoped = processes.filter { $0.kind == .agent || ($0.kind == .service && $0.agentName != nil) }
         case .all:
             scoped = processes
         }
