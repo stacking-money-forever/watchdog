@@ -8,9 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		008AFCD8C6EF377A15D29CD8 /* MemoryProcessTrackerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0FD782655E659429285BB6 /* MemoryProcessTrackerTests.swift */; };
+		0357DF863E636A85636D50DF /* ClassifierAccuracyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B914CA39FB9CFB5A8E654 /* ClassifierAccuracyTests.swift */; };
 		04199984AA2C74A7D0511EFD /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6D48371DD1B87B52F0ABF3 /* Formatters.swift */; };
 		05837BE729B3CBA6C862A77F /* ProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCEAD443B115C1A9FE3CBCB /* ProcessController.swift */; };
 		089CBF602CECDD0CAA21159C /* CLIControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A0DA4AAF1A717E149916D /* CLIControl.swift */; };
+		0BADF4E61FF75E6ABA3AFA8F /* ClassifierAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB80EBBAC32434CA822E956 /* ClassifierAudit.swift */; };
 		0C0A439DED93356C5A8C1E43 /* CommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83C18A832422855D6050ED08 /* CommandRunner.swift */; };
 		0D83476D3A59476A8E246C05 /* ProcessSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 462EFBE1C7F7855410148B4B /* ProcessSnapshot.swift */; };
 		10D91F223D6CCCE78CD9C6E9 /* ProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCEAD443B115C1A9FE3CBCB /* ProcessController.swift */; };
@@ -26,6 +28,8 @@
 		250483B30D3BC7D4CBAE0DBD /* ProcessSampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95D2446E20A77CE510668AF0 /* ProcessSampler.swift */; };
 		259406366C64382FB4B44F4A /* WatchdogCLI in Embed Dependencies */ = {isa = PBXBuildFile; fileRef = 7D9809F512FFA2861ED73FF0 /* WatchdogCLI */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		25F08E3735DF64D373CC0E13 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46B3906067473EBB37061A6E /* main.swift */; };
+		2656675C3D5D7D6C5CAB09E8 /* ProcessFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71526ED219B179D0C8A84231 /* ProcessFixture.swift */; };
+		29EE4934B9B22CF8C200DA6F /* ProcessFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71526ED219B179D0C8A84231 /* ProcessFixture.swift */; };
 		2B3A54A75C55540C4A9C2987 /* WorktreeStateResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A919D3B92028325E9A2EC87F /* WorktreeStateResolver.swift */; };
 		2CA916D4C73160C37CD4EE2B /* CLIControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A0DA4AAF1A717E149916D /* CLIControl.swift */; };
 		2DDD948A960AFCB174514558 /* LaunchAtLoginControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6634410F1C49A2A3EACE6210 /* LaunchAtLoginControllerTests.swift */; };
@@ -38,12 +42,14 @@
 		3C88FCFB608954BC0DCF4261 /* MonitorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */; };
 		3E20CD6CE094BD6C93CC196F /* OrphanClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32918E660C0992C2F35A5B13 /* OrphanClassifier.swift */; };
 		43114DB0C5F30DE05B7475BF /* HotProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B9CA3A7CBFEF438A7AA2F10 /* HotProcessTracker.swift */; };
+		43AB09A791862BCBB3843B28 /* ProcessFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71526ED219B179D0C8A84231 /* ProcessFixture.swift */; };
 		43D8E1A4B98573A7892381B5 /* SustainedProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6911B2A88595B6A3722F424 /* SustainedProcessTracker.swift */; };
 		48EE7A4439789A8BBFF43A14 /* SustainedProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6911B2A88595B6A3722F424 /* SustainedProcessTracker.swift */; };
 		501F9520A38B83EF305A2115 /* OrphanClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32918E660C0992C2F35A5B13 /* OrphanClassifier.swift */; };
 		512EA47F515D97929F2EA5B4 /* SustainedProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6911B2A88595B6A3722F424 /* SustainedProcessTracker.swift */; };
 		5492D1F9273F86E8CCA0D848 /* LibprocProcessLister.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD72B448514951397B7751C /* LibprocProcessLister.swift */; };
 		55C782FF961600D6810E4D30 /* CLIControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A0DA4AAF1A717E149916D /* CLIControl.swift */; };
+		56991E29F6DB718A1316FC43 /* ProcessFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71526ED219B179D0C8A84231 /* ProcessFixture.swift */; };
 		5796C914BF7785407A4F591F /* ProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACFF779D13EFEB553C28D52B /* ProcessMonitor.swift */; };
 		58D3AAC42A8351D70BAE28F3 /* WatchdogMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B1785C03A9A0C61C008931 /* WatchdogMenuView.swift */; };
 		5CCC8C54D38B4EAA91797BB4 /* AgentCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C9DAA70A8F6217B0577E2B /* AgentCatalog.swift */; };
@@ -59,6 +65,7 @@
 		73D5BC333D53A6C807D7AC00 /* CommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83C18A832422855D6050ED08 /* CommandRunner.swift */; };
 		748F9EE5F2212481C57C2EF1 /* MonitorEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 557BB9F5F93D4B47973014D9 /* MonitorEngineTests.swift */; };
 		75A12B8D783847708A91AD4E /* HotProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B9CA3A7CBFEF438A7AA2F10 /* HotProcessTracker.swift */; };
+		75E1F4725FB201097A9F470A /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = 2C7FAF61A60B691B53E6364D /* Fixtures */; };
 		75F75A2FC66C64639665813F /* ProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACFF779D13EFEB553C28D52B /* ProcessMonitor.swift */; };
 		77FCB6040393B22AB0CCE0B1 /* ProcessSampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95D2446E20A77CE510668AF0 /* ProcessSampler.swift */; };
 		7AF24588BE4ADBC8A159C019 /* OrphanClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32918E660C0992C2F35A5B13 /* OrphanClassifier.swift */; };
@@ -68,6 +75,7 @@
 		8061E185DA76CD0BEFEEE464 /* SustainedProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6911B2A88595B6A3722F424 /* SustainedProcessTracker.swift */; };
 		81077925489CFE90A035155E /* WatchdogPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5297CC89235C51FCFAD950 /* WatchdogPreviewApp.swift */; };
 		82EBA0BBAEBC8A4AD6A25EA5 /* SuspensionLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8FEB2A2CBA7C2CC41CCF50 /* SuspensionLedger.swift */; };
+		892731B64BA2CD559BEC6BBA /* ClassifierAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB80EBBAC32434CA822E956 /* ClassifierAudit.swift */; };
 		8CFCC5E6286A5AF703A21C4D /* WorktreeStateResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A919D3B92028325E9A2EC87F /* WorktreeStateResolver.swift */; };
 		8F36FCE6C19B9B8D0AE55D0A /* LibprocProcessLister.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD72B448514951397B7751C /* LibprocProcessLister.swift */; };
 		8FBAEB214C7DA3203C6AD30A /* WatchdogApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1843659E8E6FE1E5CAED3F8 /* WatchdogApp.swift */; };
@@ -79,6 +87,7 @@
 		9B61B5A0E10578089BE2D860 /* MonitorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */; };
 		9D83DC61C5D6251B0151882E /* ProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCEAD443B115C1A9FE3CBCB /* ProcessController.swift */; };
 		9F21E1DB59E3EB397E1681CE /* CLIControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A0DA4AAF1A717E149916D /* CLIControl.swift */; };
+		9F50B1354862208541BDF0CA /* ClassifierAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB80EBBAC32434CA822E956 /* ClassifierAudit.swift */; };
 		A086FCA936BBF66D6BD452D2 /* CLIControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A0DA4AAF1A717E149916D /* CLIControl.swift */; };
 		A261165108B5E3B5A8AF5605 /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6D48371DD1B87B52F0ABF3 /* Formatters.swift */; };
 		A5E257871321F3B62B354B6A /* WatchdogSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C2DCBA045E144FBA6A4BDBB /* WatchdogSnapshot.swift */; };
@@ -87,6 +96,7 @@
 		A85BB007F2C100FE1D2F29CA /* ProcessSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 462EFBE1C7F7855410148B4B /* ProcessSnapshot.swift */; };
 		AC2BE03162BB28CB4C90D309 /* OrphanClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72B9425347B4C4060EEB9DBF /* OrphanClassifierTests.swift */; };
 		B46FB3B2756B7FB5AC2A3850 /* ProcessMetricsReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 562E4C0EC8F780DABFBDB572 /* ProcessMetricsReader.swift */; };
+		B6223B7FAC2C35BC4D2A9D31 /* ProcessFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71526ED219B179D0C8A84231 /* ProcessFixture.swift */; };
 		B7A9DF7ABB119E2797A73DFD /* ProcessController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCEAD443B115C1A9FE3CBCB /* ProcessController.swift */; };
 		B83CA1860BBB531A3F4D8674 /* WatchdogUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD603B4A4AEFB65FEEEB53D0 /* WatchdogUITests.swift */; };
 		B8676868842B2834803D5E0F /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6D48371DD1B87B52F0ABF3 /* Formatters.swift */; };
@@ -96,6 +106,7 @@
 		BC85CF6A35C90A99B562E850 /* MonitorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */; };
 		BF5B6137041BFE4C21A2705F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FD15E53CE2D0BCF424F15B31 /* Assets.xcassets */; };
 		C151E1886CD9658A689331FC /* MonitorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */; };
+		C309EEE3F294C5F4C253F417 /* ClassifierAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB80EBBAC32434CA822E956 /* ClassifierAudit.swift */; };
 		C319DD693A11D70174958D9B /* LaunchAtLoginController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 623EE835F79DB8DB079E9459 /* LaunchAtLoginController.swift */; };
 		C3982C05D4C38C058DFD6045 /* SuspensionLedger.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B8FEB2A2CBA7C2CC41CCF50 /* SuspensionLedger.swift */; };
 		C49B92C5A91680424F45E394 /* MemoryProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38BA0DD1569E7204133ECE5D /* MemoryProcessTracker.swift */; };
@@ -112,6 +123,7 @@
 		D5C521F756D5143F59B2CEAB /* ProcessSampler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95D2446E20A77CE510668AF0 /* ProcessSampler.swift */; };
 		D67ACA273FBAD79382D81A59 /* HotProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B9CA3A7CBFEF438A7AA2F10 /* HotProcessTracker.swift */; };
 		D6A6E7E7249B87D456694B7E /* ProcessSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 462EFBE1C7F7855410148B4B /* ProcessSnapshot.swift */; };
+		D79E1B918D8E64770376C3FA /* ClassifierAudit.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBB80EBBAC32434CA822E956 /* ClassifierAudit.swift */; };
 		D7C637BA399396466F6B9E59 /* WorktreeStateResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = A919D3B92028325E9A2EC87F /* WorktreeStateResolver.swift */; };
 		DA55135F07AEFB8E024D9F1A /* LaunchAtLoginController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 623EE835F79DB8DB079E9459 /* LaunchAtLoginController.swift */; };
 		DA622C34AC2E20961624CE3C /* ProcessSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 462EFBE1C7F7855410148B4B /* ProcessSnapshot.swift */; };
@@ -182,6 +194,7 @@
 		1917D8CA193D8BADFA13F83A /* WatchdogSnapshot */ = {isa = PBXFileReference; includeInIndex = 0; path = WatchdogSnapshot; sourceTree = BUILT_PRODUCTS_DIR; };
 		1E368705084AEE528C44928C /* WatchdogE2EHelper */ = {isa = PBXFileReference; includeInIndex = 0; path = WatchdogE2EHelper; sourceTree = BUILT_PRODUCTS_DIR; };
 		22BBA85AC2EEFF72792EF723 /* ProcessListParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessListParser.swift; sourceTree = "<group>"; };
+		2C7FAF61A60B691B53E6364D /* Fixtures */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fixtures; path = WatchdogTests/Fixtures; sourceTree = SOURCE_ROOT; };
 		32918E660C0992C2F35A5B13 /* OrphanClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrphanClassifier.swift; sourceTree = "<group>"; };
 		386BD7AD1741807566431A00 /* WatchdogTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WatchdogTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		38BA0DD1569E7204133ECE5D /* MemoryProcessTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryProcessTracker.swift; sourceTree = "<group>"; };
@@ -200,6 +213,7 @@
 		66EF8291892F7719CAB88A00 /* ProcessListParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessListParserTests.swift; sourceTree = "<group>"; };
 		6A2DE6DAAB1F45E0C3A8592E /* WatchdogLiveQA.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = WatchdogLiveQA.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6B8FEB2A2CBA7C2CC41CCF50 /* SuspensionLedger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SuspensionLedger.swift; sourceTree = "<group>"; };
+		71526ED219B179D0C8A84231 /* ProcessFixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessFixture.swift; sourceTree = "<group>"; };
 		72B9425347B4C4060EEB9DBF /* OrphanClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrphanClassifierTests.swift; sourceTree = "<group>"; };
 		733FB659406548E61DBCC32A /* MetricsAndControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricsAndControlTests.swift; sourceTree = "<group>"; };
 		767703A061247B5038326FF5 /* AgentCatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCatalogTests.swift; sourceTree = "<group>"; };
@@ -219,6 +233,8 @@
 		ABD72B448514951397B7751C /* LibprocProcessLister.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibprocProcessLister.swift; sourceTree = "<group>"; };
 		ACFF779D13EFEB553C28D52B /* ProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessMonitor.swift; sourceTree = "<group>"; };
 		B0BF20993B973304DDD6FDE3 /* HotProcessTrackerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotProcessTrackerTests.swift; sourceTree = "<group>"; };
+		C11B914CA39FB9CFB5A8E654 /* ClassifierAccuracyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassifierAccuracyTests.swift; sourceTree = "<group>"; };
+		CBB80EBBAC32434CA822E956 /* ClassifierAudit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassifierAudit.swift; sourceTree = "<group>"; };
 		CD603B4A4AEFB65FEEEB53D0 /* WatchdogUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchdogUITests.swift; sourceTree = "<group>"; };
 		D07A0DA4AAF1A717E149916D /* CLIControl.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIControl.swift; sourceTree = "<group>"; };
 		E0C056B715E840AC8DCF3E48 /* CLIControlTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIControlTests.swift; sourceTree = "<group>"; };
@@ -241,6 +257,7 @@
 		21137211629266D3E4E7593B /* WatchdogCore */ = {
 			isa = PBXGroup;
 			children = (
+				852A76737B758309A256FDB4 /* Audit */,
 				D0566FB907248529108FAE7D /* CLI */,
 				80F1E8C9BEFF61D6DFCC9C9C /* Models */,
 				A859629BD2F87B7735644B4D /* Services */,
@@ -294,6 +311,15 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
+		852A76737B758309A256FDB4 /* Audit */ = {
+			isa = PBXGroup;
+			children = (
+				CBB80EBBAC32434CA822E956 /* ClassifierAudit.swift */,
+				71526ED219B179D0C8A84231 /* ProcessFixture.swift */,
+			);
+			path = Audit;
+			sourceTree = "<group>";
+		};
 		863369525CBE7C9D94A11D40 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -322,7 +348,9 @@
 			children = (
 				767703A061247B5038326FF5 /* AgentCatalogTests.swift */,
 				A49ED1F557CF9165ED7B982D /* AutoSuspendPolicyTests.swift */,
+				C11B914CA39FB9CFB5A8E654 /* ClassifierAccuracyTests.swift */,
 				E0C056B715E840AC8DCF3E48 /* CLIControlTests.swift */,
+				2C7FAF61A60B691B53E6364D /* Fixtures */,
 				B0BF20993B973304DDD6FDE3 /* HotProcessTrackerTests.swift */,
 				6634410F1C49A2A3EACE6210 /* LaunchAtLoginControllerTests.swift */,
 				AB0FD782655E659429285BB6 /* MemoryProcessTrackerTests.swift */,
@@ -424,6 +452,7 @@
 			buildConfigurationList = D207DCD7B3874745D298E095 /* Build configuration list for PBXNativeTarget "WatchdogTests" */;
 			buildPhases = (
 				5F5405BE19021C5AA4E9CFDB /* Sources */,
+				AAF1ABBCDAC124F92F61FE50 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -646,6 +675,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AAF1ABBCDAC124F92F61FE50 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				75E1F4725FB201097A9F470A /* Fixtures in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -663,6 +700,7 @@
 			files = (
 				94E1ECF55BA28537DB85B592 /* AgentCatalog.swift in Sources */,
 				A086FCA936BBF66D6BD452D2 /* CLIControl.swift in Sources */,
+				D79E1B918D8E64770376C3FA /* ClassifierAudit.swift in Sources */,
 				0C0A439DED93356C5A8C1E43 /* CommandRunner.swift in Sources */,
 				B8676868842B2834803D5E0F /* Formatters.swift in Sources */,
 				15FCA0CA6EE23434EF3AA855 /* HotProcessTracker.swift in Sources */,
@@ -672,6 +710,7 @@
 				C151E1886CD9658A689331FC /* MonitorEngine.swift in Sources */,
 				3E20CD6CE094BD6C93CC196F /* OrphanClassifier.swift in Sources */,
 				10D91F223D6CCCE78CD9C6E9 /* ProcessController.swift in Sources */,
+				2656675C3D5D7D6C5CAB09E8 /* ProcessFixture.swift in Sources */,
 				6BD51BC0C3A14A7B5543531C /* ProcessListParser.swift in Sources */,
 				B46FB3B2756B7FB5AC2A3850 /* ProcessMetricsReader.swift in Sources */,
 				FFD27144E60E73AA969F8F59 /* ProcessMonitor.swift in Sources */,
@@ -692,6 +731,7 @@
 			files = (
 				9550449AF6395322C74FF41C /* AgentCatalog.swift in Sources */,
 				9F21E1DB59E3EB397E1681CE /* CLIControl.swift in Sources */,
+				892731B64BA2CD559BEC6BBA /* ClassifierAudit.swift in Sources */,
 				E32DA9871439EF6FE4F3C92F /* CommandRunner.swift in Sources */,
 				BC5A0A005A1F675842C6EB45 /* Formatters.swift in Sources */,
 				75A12B8D783847708A91AD4E /* HotProcessTracker.swift in Sources */,
@@ -701,6 +741,7 @@
 				BC85CF6A35C90A99B562E850 /* MonitorEngine.swift in Sources */,
 				7AF24588BE4ADBC8A159C019 /* OrphanClassifier.swift in Sources */,
 				B7A9DF7ABB119E2797A73DFD /* ProcessController.swift in Sources */,
+				43AB09A791862BCBB3843B28 /* ProcessFixture.swift in Sources */,
 				C6900A6492FE90B779D0F6C5 /* ProcessListParser.swift in Sources */,
 				BA398A0650CD14E41BE63278 /* ProcessMetricsReader.swift in Sources */,
 				75F75A2FC66C64639665813F /* ProcessMonitor.swift in Sources */,
@@ -721,6 +762,7 @@
 			files = (
 				5CCC8C54D38B4EAA91797BB4 /* AgentCatalog.swift in Sources */,
 				2CA916D4C73160C37CD4EE2B /* CLIControl.swift in Sources */,
+				9F50B1354862208541BDF0CA /* ClassifierAudit.swift in Sources */,
 				63901463481592201A49A80A /* CommandRunner.swift in Sources */,
 				04199984AA2C74A7D0511EFD /* Formatters.swift in Sources */,
 				43114DB0C5F30DE05B7475BF /* HotProcessTracker.swift in Sources */,
@@ -730,6 +772,7 @@
 				D0AB4144C560D703BFE1DD25 /* MonitorEngine.swift in Sources */,
 				1724502DB7DAB7DDF0B25433 /* OrphanClassifier.swift in Sources */,
 				9D83DC61C5D6251B0151882E /* ProcessController.swift in Sources */,
+				56991E29F6DB718A1316FC43 /* ProcessFixture.swift in Sources */,
 				5E453F1B533DC1C3026EDD89 /* ProcessListParser.swift in Sources */,
 				CB10D7A13D5192ECE1C0F7D5 /* ProcessMetricsReader.swift in Sources */,
 				5796C914BF7785407A4F591F /* ProcessMonitor.swift in Sources */,
@@ -750,6 +793,7 @@
 			files = (
 				FC47B51908FECA21AA2FEABB /* AgentCatalog.swift in Sources */,
 				55C782FF961600D6810E4D30 /* CLIControl.swift in Sources */,
+				0BADF4E61FF75E6ABA3AFA8F /* ClassifierAudit.swift in Sources */,
 				73D5BC333D53A6C807D7AC00 /* CommandRunner.swift in Sources */,
 				2E0FCE6424D57BEDCFC80B20 /* Formatters.swift in Sources */,
 				E98342FEEAEC4C9DAA275D39 /* HotProcessTracker.swift in Sources */,
@@ -759,6 +803,7 @@
 				9B61B5A0E10578089BE2D860 /* MonitorEngine.swift in Sources */,
 				1465A59C12D49D69C1B2D20A /* OrphanClassifier.swift in Sources */,
 				05837BE729B3CBA6C862A77F /* ProcessController.swift in Sources */,
+				29EE4934B9B22CF8C200DA6F /* ProcessFixture.swift in Sources */,
 				D3CF61E742C1719B917F900D /* ProcessListParser.swift in Sources */,
 				C925D238B17AAFA27208B8F4 /* ProcessMetricsReader.swift in Sources */,
 				DAE224DC1F9A141EFB7D979A /* ProcessMonitor.swift in Sources */,
@@ -788,6 +833,7 @@
 				DAC72E82F71E0BB1481E0CDE /* AgentCatalogTests.swift in Sources */,
 				D263425B3440805C0F4105A6 /* AutoSuspendPolicyTests.swift in Sources */,
 				DE835109721373E4A990B4B1 /* CLIControlTests.swift in Sources */,
+				0357DF863E636A85636D50DF /* ClassifierAccuracyTests.swift in Sources */,
 				7C92D11B9F0FC21F52706CE4 /* HotProcessTrackerTests.swift in Sources */,
 				2DDD948A960AFCB174514558 /* LaunchAtLoginControllerTests.swift in Sources */,
 				008AFCD8C6EF377A15D29CD8 /* MemoryProcessTrackerTests.swift in Sources */,
@@ -807,6 +853,7 @@
 			files = (
 				68FD2E9224E3D3DE2C3CE49A /* AgentCatalog.swift in Sources */,
 				089CBF602CECDD0CAA21159C /* CLIControl.swift in Sources */,
+				C309EEE3F294C5F4C253F417 /* ClassifierAudit.swift in Sources */,
 				61FE5ED52B9BFD823B4691E7 /* CommandRunner.swift in Sources */,
 				A261165108B5E3B5A8AF5605 /* Formatters.swift in Sources */,
 				D67ACA273FBAD79382D81A59 /* HotProcessTracker.swift in Sources */,
@@ -815,6 +862,7 @@
 				3C88FCFB608954BC0DCF4261 /* MonitorEngine.swift in Sources */,
 				501F9520A38B83EF305A2115 /* OrphanClassifier.swift in Sources */,
 				EC6868340D0DE4268F11D347 /* ProcessController.swift in Sources */,
+				B6223B7FAC2C35BC4D2A9D31 /* ProcessFixture.swift in Sources */,
 				3851EDDC716C693F9FB8EDD2 /* ProcessListParser.swift in Sources */,
 				1344D76CB76406E2C9D4AA6A /* ProcessMetricsReader.swift in Sources */,
 				D5C521F756D5143F59B2CEAB /* ProcessSampler.swift in Sources */,

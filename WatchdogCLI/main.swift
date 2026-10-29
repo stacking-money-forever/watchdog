@@ -19,6 +19,10 @@ let usageText = """
       Watchdog(앱·CLI)이 일시 정지한 채 멈춰 있는 프로세스를 보여 줍니다.
   doctor [--json]
       샘플링 비용과 환경을 진단합니다.
+  snapshot [--out FILE]
+      현재 프로세스 목록을 분류 정확도 픽스처와 같은 JSON으로 저장합니다. --out이 없으면 표준 출력입니다.
+  audit FIXTURE [--labels FILE] [--json]
+      저장된 스냅샷을 분류합니다. 라벨이 있으면 필드별 일치·불일치 보고서를 냅니다.
 
 제어:
   suspend <TOKEN|PID> [--force]     SIGSTOP. 되돌릴 수 있음. 에이전트가 아니면 경고합니다.
@@ -43,6 +47,7 @@ struct Arguments {
 
     static let valueOptions: Set<String> = [
         "--scope", "--search", "--interval", "--count", "--duration", "--cpu", "--sustain", "--memory",
+        "--out", "--labels",
     ]
     static let knownFlags: Set<String> = ["--json", "--force", "--auto-suspend", "--resume-all", "--help", "-h", "--version"]
 
@@ -693,6 +698,84 @@ func runDoctor(_ arguments: Arguments) async throws -> Int32 {
     return CLIExitCode.success
 }
 
+// MARK: - snapshot / audit
+
+func runSnapshot(_ arguments: Arguments) throws -> Int32 {
+    let home = NSHomeDirectory()
+    let listed = try LibprocProcessLister.list()
+    var argumentReader = ArgumentReader()
+    let fixture = ProcessFixture(
+        capturedAt: ProcessFixture.capturedAtNow(),
+        uid: getuid(),
+        rows: listed.map { raw in
+            let snapshot = raw.snapshot
+            let args = argumentReader.arguments(pid: snapshot.id).map {
+                ProcessFixture.collapsingHome($0, home: home)
+            }
+            var cwd: String?
+            if snapshot.kind == .agent {
+                cwd = WorkingDirectoryResolver.currentDirectory(pid: snapshot.id).map {
+                    ProcessFixture.collapsingHome($0, home: home)
+                }
+            }
+            return ProcessFixture.Row(
+                pid: snapshot.id,
+                ppid: snapshot.parentPID,
+                pgid: snapshot.processGroupID,
+                uid: snapshot.userID,
+                tty: snapshot.tty,
+                state: snapshot.state,
+                elapsed: snapshot.elapsed,
+                path: ProcessFixture.collapsingHome(snapshot.executablePath, home: home),
+                args: args,
+                cwd: cwd
+            )
+        }
+    )
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    let data = try encoder.encode(fixture)
+    guard let text = String(data: data, encoding: .utf8) else {
+        throw CLIUsageError("스냅샷 JSON을 인코딩하지 못했습니다.")
+    }
+    if let path = arguments.options["--out"] {
+        try text.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+    } else {
+        print(text)
+    }
+    return CLIExitCode.success
+}
+
+func runAudit(_ arguments: Arguments) throws -> Int32 {
+    guard let path = arguments.positionals.first else {
+        throw CLIUsageError("audit에는 픽스처 파일이 필요합니다.")
+    }
+    let fixtureURL = URL(fileURLWithPath: path)
+    let fixture = try JSONDecoder().decode(ProcessFixture.self, from: Data(contentsOf: fixtureURL))
+
+    if let labelsPath = arguments.options["--labels"] {
+        let labels = try JSONDecoder().decode(
+            ProcessLabelFile.self,
+            from: Data(contentsOf: URL(fileURLWithPath: labelsPath))
+        )
+        let report = ClassifierAudit.audit(fixture: fixture, labels: labels.labels)
+        if arguments.json {
+            emitJSON(report)
+        } else {
+            print(report.render())
+        }
+        return report.untoleratedMismatchCount == 0 ? CLIExitCode.success : CLIExitCode.failure
+    }
+
+    let summary = ClassifierAudit.summarize(ClassifierAudit.classify(fixture))
+    if arguments.json {
+        emitJSON(summary)
+    } else {
+        print(summary.render())
+    }
+    return CLIExitCode.success
+}
+
 // MARK: - Entry point
 
 func main() async -> Int32 {
@@ -712,6 +795,8 @@ func main() async -> Int32 {
         case "watch": return try await runWatch(arguments)
         case "stopped": return try await runStopped(arguments)
         case "doctor": return try await runDoctor(arguments)
+        case "snapshot": return try runSnapshot(arguments)
+        case "audit": return try runAudit(arguments)
         case "help": print(usageText); return CLIExitCode.success
         default:
             if let action = CLIAction(rawValue: command) {

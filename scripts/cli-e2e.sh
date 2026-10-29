@@ -184,6 +184,16 @@ check "its child is attributed to it" /usr/bin/python3 -c \
   "$child_json" "$interpreted"
 kill -TERM "$child" "$interpreted" 2>/dev/null || true
 
+echo "Audit"
+check "snapshot --out writes a file" expect_exit 0 "$cli" snapshot --out "$work/snap.json"
+check "snapshot JSON is valid" /usr/bin/python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "rows" in d and isinstance(d["rows"], list)' "$work/snap.json"
+check "audit reads snapshot and prints a summary" expect_exit 0 "$cli" audit "$work/snap.json"
+check "audit summary names kinds" grep -q '종류:' "$work/last.out"
+check "audit fixture+labels --json reports mismatches" expect_exit 1 \
+  "$cli" audit "$repo_root/WatchdogTests/Fixtures/mac-20261030.json" \
+  --labels "$repo_root/WatchdogTests/Fixtures/mac-20261030.labels.json" --json
+check "audit JSON has mismatches" /usr/bin/python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit("mismatches" not in d)' "$work/last.out"
+
 echo
 echo "cli-e2e: $pass passed, $fail failed (work dir $work)"
 [[ "$fail" -eq 0 ]]

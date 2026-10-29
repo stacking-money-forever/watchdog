@@ -42,6 +42,13 @@ targets:
     platform: macOS
     sources:
       - path: WatchdogTests
+        excludes:
+          - Fixtures
+      - path: WatchdogTests/Fixtures
+        buildPhase: resources
+        type: folder
+    resources:
+      - path: WatchdogTests/Fixtures
     dependencies:
       - target: Watchdog
     settings:
