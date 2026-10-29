@@ -125,7 +125,7 @@
 | A3 | default | `AgentSession` 집계 + `SessionTracker` + CLI `sessions` | A2 | `sessions --json` 합계가 `list --json` 멤버 합과 ±1% 이내; e2e에 가짜 에이전트+자식 2개 합산 검사 |
 | A4 | default (A3와 병렬) | `AgentRules` 파일 + `suspected` 신뢰도 + CLI `rules show/validate` | A1 | 규칙 파일로 추가한 이름이 e2e에서 agent로 인식, 손상 파일은 기본값 + `doctor` 경고 |
 | A5 | default (A3·A4 뒤) | `ActionJournal` + CLI `journal` + 앱·CLI 모든 시그널 경로 기록 | A2 | e2e: suspend→resume→terminate 3건이 journal에 순서대로, 동시 2프로세스 쓰기 후 파일 유효 |
-| A6 | default | `autoSuspendScope: session` + ledger `groupID` + 묶음 재개 | A3, A5 | e2e: `watch --auto-suspend --scope session`으로 가짜 세션 3 프로세스 모두 T, `stopped --resume-all`로 모두 복귀 |
+| A6 | default | `autoSuspendScope: session` + ledger `groupID` + 묶음 재개 + **`watch --auto-suspend --only` 대상 제한** | A3, A5 | e2e: `watch --auto-suspend --scope session --only <root>`로 가짜 세션 3 프로세스만 T, `stopped --resume-all`로 모두 복귀. 첫 시도는 `--only` 없이 실행돼 실제 세션을 멈춤 → `incident-20261030-e2e-auto-suspend.md` |
 | A7 | bulk | CLI JSON enum 문자열 고정 + `docs/cli-json.md` | A5 | 스키마 문서의 모든 enum 값이 코드 `rawValue`와 일치(스크립트 검사) |
 | R1 | Fable | 실기 재검증(audit 불일치 0, 에이전트·세션·고아 `ps` 대조), 0.2.7 릴리스·pin·설치 | A1–A7 | 기존 릴리스 게이트 전부 |
 
