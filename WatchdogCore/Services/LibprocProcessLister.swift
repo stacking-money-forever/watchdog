@@ -202,6 +202,7 @@ enum LibprocProcessLister {
             startTimeMicroseconds: startMicroseconds
         )
         snapshot.launchScript = command?.script
+        snapshot.launchSubcommand = command?.subcommand
         return RawProcessRow(
             snapshot: snapshot,
             totalCPUTimeNanoseconds: hasTaskInfo
@@ -288,6 +289,7 @@ private final class TTYNameCache: @unchecked Sendable {
 struct LaunchCommand: Sendable, Equatable {
     let name: String
     let script: String?
+    let subcommand: String?
 }
 
 /// Reads argv through `KERN_PROCARGS2`, reusing one buffer across a whole
@@ -331,7 +333,7 @@ struct ArgumentReader {
         while index < bytes.count, bytes[index] == 0 { index += 1 }
 
         var arguments: [String] = []
-        while index < bytes.count, arguments.count < min(argc, maximumScriptSearch + 1) {
+        while index < bytes.count, arguments.count < min(argc, maximumScriptSearch + 2) {
             let end = bytes[index...].firstIndex(of: 0) ?? bytes.endIndex
             arguments.append(String(decoding: bytes[index..<end], as: UTF8.self))
             index = end + 1
@@ -340,6 +342,47 @@ struct ArgumentReader {
         let script = AgentCatalog.isInterpreter(name)
             ? AgentCatalog.launchScript(arguments: Array(arguments.dropFirst()))
             : nil
-        return LaunchCommand(name: name, script: script)
+        let subcommand = AgentCatalog.launchSubcommand(arguments: arguments)
+        return LaunchCommand(name: name, script: script, subcommand: subcommand)
+    }
+
+    /// argv[0]… for a live dump. Classification still uses `command(pid:)`.
+    mutating func arguments(pid: Int32, limit: Int = 10) -> [String] {
+        if buffer.isEmpty {
+            var argumentMax: Int32 = 0
+            var size = MemoryLayout<Int32>.size
+            var mib: [Int32] = [CTL_KERN, KERN_ARGMAX]
+            guard sysctl(&mib, 2, &argumentMax, &size, nil, 0) == 0, argumentMax > 0 else {
+                return []
+            }
+            buffer = [UInt8](repeating: 0, count: Int(argumentMax))
+        }
+
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = buffer.count
+        let result = buffer.withUnsafeMutableBytes {
+            sysctl(&mib, 3, $0.baseAddress, &size, nil, 0)
+        }
+        guard result == 0, size > MemoryLayout<Int32>.size else { return [] }
+
+        return buffer.withUnsafeBytes { raw in
+            Self.arguments(from: UnsafeRawBufferPointer(rebasing: raw[0..<size]), limit: limit)
+        }
+    }
+
+    static func arguments(from bytes: UnsafeRawBufferPointer, limit: Int) -> [String] {
+        guard bytes.count > MemoryLayout<Int32>.size, limit > 0 else { return [] }
+        let argc = Int(bytes.loadUnaligned(as: Int32.self))
+        var index = MemoryLayout<Int32>.size
+        while index < bytes.count, bytes[index] != 0 { index += 1 }
+        while index < bytes.count, bytes[index] == 0 { index += 1 }
+
+        var arguments: [String] = []
+        while index < bytes.count, arguments.count < min(argc, limit) {
+            let end = bytes[index...].firstIndex(of: 0) ?? bytes.endIndex
+            arguments.append(String(decoding: bytes[index..<end], as: UTF8.self))
+            index = end + 1
+        }
+        return arguments
     }
 }

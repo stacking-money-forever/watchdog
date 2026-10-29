@@ -3,6 +3,11 @@ import XCTest
 @testable import Watchdog
 
 final class OrphanClassifierTests: XCTestCase {
+    override func tearDown() {
+        AgentCatalog.resetToBuiltIn()
+        super.tearDown()
+    }
+
     func testAgentUnderSessionHostHasNoOrphanReason() throws {
         let orca = snapshot(pid: 100, parent: 1, name: "/Applications/Orca.app/Contents/Frameworks/Orca Helper.app/Contents/MacOS/Orca Helper")
         let login = snapshot(pid: 101, parent: 100, name: "/usr/bin/login")
@@ -16,8 +21,9 @@ final class OrphanClassifierTests: XCTestCase {
     }
 
     func testReparentedAgentHasExactLaunchdReason() throws {
-        let agent = snapshot(pid: 103, parent: 1, name: "/Users/test/.local/bin/gjc")
+        let agent = snapshot(pid: 103, parent: 1, name: "/Users/test/.local/bin/gjc", tty: "ttys001")
 
+        XCTAssertEqual(try classified(agent.id, in: [agent]).kind, .agent)
         XCTAssertEqual(try classified(agent.id, in: [agent]).orphanReason, .reparentedToLaunchd)
     }
 
@@ -36,7 +42,7 @@ final class OrphanClassifierTests: XCTestCase {
 
     func testDetachedLineageHasExactReasonButAttachedTTYDoesNot() throws {
         let detachedAgent = snapshot(pid: 103, parent: 104, name: "/Users/test/.local/bin/gjc")
-        let detachedShell = snapshot(pid: 104, parent: 1, name: "/bin/zsh")
+        let detachedShell = snapshot(pid: 104, parent: 1, name: "/bin/zsh", tty: "ttys009")
         XCTAssertEqual(
             try classified(detachedAgent.id, in: [detachedAgent, detachedShell]).orphanReason,
             .detachedSession
@@ -47,19 +53,32 @@ final class OrphanClassifierTests: XCTestCase {
         XCTAssertNil(try classified(attachedAgent.id, in: [attachedAgent, attachedShell]).orphanReason)
     }
 
-    func testNonAgentIsNeverClassifiedAsOrphan() throws {
+    func testSystemDaemonWithTemporaryWorkingDirectoryIsNotLeftover() throws {
+        // privatecloudcomputed and IMTransferAgent keep a cwd under /var/folders.
+        var daemon = snapshot(pid: 105, parent: 1, name: "/System/Library/PrivateFrameworks/PCC.framework/privatecloudcomputed")
+        daemon.workingDirectory = "/private/var/folders/zz/T/com.apple.pcc"
+        var app = snapshot(pid: 106, parent: 1, name: "/Applications/Foo.app/Contents/MacOS/Foo")
+        app.workingDirectory = "/private/var/folders/zz/T/foo"
+
+        XCTAssertEqual(try classified(daemon.id, in: [daemon, app]).kind, .system)
+        XCTAssertNil(try classified(daemon.id, in: [daemon, app]).orphanReason)
+        XCTAssertEqual(try classified(app.id, in: [daemon, app]).kind, .application)
+        XCTAssertNil(try classified(app.id, in: [daemon, app]).orphanReason)
+    }
+
+    func testResidentHeadlessProcessIsServiceNotOrphan() throws {
         let ordinary = snapshot(pid: 103, parent: 1, name: "/usr/local/bin/worker")
 
         let result = try classified(ordinary.id, in: [ordinary])
 
-        XCTAssertEqual(result.kind, .other)
+        XCTAssertEqual(result.kind, .service)
         XCTAssertNil(result.orphanReason)
         XCTAssertFalse(result.suspectedOrphan)
     }
 
     func testDuplicatePIDLinesDoNotCrashAndStayClassified() throws {
-        let first = snapshot(pid: 103, parent: 1, name: "/Users/test/.local/bin/gjc")
-        let duplicate = snapshot(pid: 103, parent: 1, name: "/Users/test/.local/bin/gjc")
+        let first = snapshot(pid: 103, parent: 1, name: "/Users/test/.local/bin/gjc", tty: "ttys001")
+        let duplicate = snapshot(pid: 103, parent: 1, name: "/Users/test/.local/bin/gjc", tty: "ttys001")
 
         let result = try classified(103, in: [first, duplicate])
 
@@ -109,6 +128,174 @@ final class OrphanClassifierTests: XCTestCase {
             let agent = snapshot(pid: 101, parent: 100, name: "codex")
             XCTAssertNil(try classified(agent.id, in: [supervisor, agent]).orphanReason, host)
         }
+    }
+
+    func testOpencodeServeUnderLaunchdIsServiceNotOrphan() throws {
+        var serve = snapshot(pid: 200, parent: 1, name: "/opt/homebrew/bin/opencode")
+        serve.launchSubcommand = "serve"
+
+        let result = try classified(serve.id, in: [serve])
+
+        XCTAssertEqual(result.kind, .service)
+        XCTAssertEqual(result.agentName, "opencode")
+        XCTAssertNil(result.orphanReason)
+    }
+
+    func testCodexAppServerDaemonIsServiceRootForListenChild() throws {
+        var daemon = snapshot(pid: 300, parent: 1, name: "/Users/test/.codex/bin/codex")
+        daemon.launchSubcommand = "app-server"
+        var listen = snapshot(pid: 301, parent: 300, name: "/Users/test/.codex/bin/codex")
+        listen.launchSubcommand = "app-server"
+
+        let child = try classified(listen.id, in: [daemon, listen])
+        let parent = try classified(daemon.id, in: [daemon, listen])
+
+        XCTAssertEqual(parent.kind, .service)
+        XCTAssertEqual(child.kind, .service)
+        XCTAssertNil(parent.orphanReason)
+        XCTAssertNil(child.orphanReason)
+        XCTAssertEqual(child.agentAncestor?.pid, daemon.id)
+        XCTAssertEqual(child.agentAncestor?.name, "codex")
+    }
+
+    func testTempWaitScriptUnderLaunchdIsOtherOrphan() throws {
+        var wait = snapshot(pid: 400, parent: 1, name: "/bin/sh")
+        wait.launchScript = "/private/var/folders/x/T/.tmpAB/scripts/wait"
+
+        let result = try classified(wait.id, in: [wait])
+
+        XCTAssertEqual(result.kind, .other)
+        XCTAssertEqual(result.orphanReason, .temporaryLaunchPath)
+    }
+
+    func testTempPathCodexIsServiceOrphan() throws {
+        var leftover = snapshot(
+            pid: 401,
+            parent: 1,
+            name: "/private/tmp/claude-501/scratch/codex"
+        )
+        leftover.launchSubcommand = "app-server"
+
+        let result = try classified(leftover.id, in: [leftover])
+
+        XCTAssertEqual(result.kind, .service)
+        XCTAssertEqual(result.agentName, "codex")
+        XCTAssertEqual(result.orphanReason, .temporaryLaunchPath)
+    }
+
+    func testTempWorkingDirectoryBrgrIsOrphan() throws {
+        var notify = snapshot(
+            pid: 402,
+            parent: 1,
+            name: "/Users/test/Library/Application Support/brgr/bin/brgr"
+        )
+        notify.workingDirectory = "/private/var/folders/x/T/.tmpX"
+
+        let result = try classified(notify.id, in: [notify])
+
+        XCTAssertEqual(result.kind, .other)
+        XCTAssertEqual(result.orphanReason, .temporaryLaunchPath)
+    }
+
+    func testAppTranslocationIsApplicationNotOrphan() throws {
+        let app = snapshot(
+            pid: 403,
+            parent: 1,
+            name: "/private/var/folders/x/T/AppTranslocation/E7E2/d/Foo.app/Contents/MacOS/Foo"
+        )
+
+        let result = try classified(app.id, in: [app])
+
+        XCTAssertEqual(result.kind, .application)
+        XCTAssertNil(result.orphanReason)
+    }
+
+    func testBunServerUnderClaudeIsStillOtherViaClaude() throws {
+        let agent = snapshot(pid: 500, parent: 80, name: "claude", tty: "ttys001")
+        let child = snapshot(pid: 501, parent: 500, name: "/opt/homebrew/bin/bun", tty: "ttys001")
+        var server = child
+        server.launchScript = "/Users/test/project/server.ts"
+
+        let result = try classified(server.id, in: [agent, server])
+
+        XCTAssertEqual(result.kind, .other)
+        XCTAssertEqual(result.agentAncestor, AgentAncestor(pid: 500, name: "claude", workingDirectory: nil))
+        XCTAssertNil(result.orphanReason)
+    }
+
+    func testFrameworkPythonHttpServerIsService() throws {
+        var server = snapshot(
+            pid: 610,
+            parent: 1,
+            name: "/Library/Developer/Python.app/Contents/MacOS/Python"
+        )
+        server.launchScript = "http.server"
+
+        let result = try classified(server.id, in: [server])
+
+        XCTAssertEqual(result.kind, .service)
+        XCTAssertNil(result.orphanReason)
+    }
+
+    func testSuspectedInterpreterUnderHostedShell() throws {
+        let herdr = snapshot(pid: 10, parent: 1, name: "/opt/homebrew/opt/herdr/bin/herdr")
+        let shell = snapshot(pid: 11, parent: 10, name: "/bin/zsh", tty: "ttys001")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node", tty: "ttys001")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [herdr, shell, node])
+
+        XCTAssertEqual(result.kind, .agent)
+        XCTAssertEqual(result.agentConfidence, .suspected)
+        XCTAssertEqual(result.agentName, "newagent")
+        XCTAssertFalse(MonitorEngine.isAutoSuspendEligible(result))
+        let sessions = SessionAggregator.sessions(from: OrphanClassifier.classify([herdr, shell, node]))
+        XCTAssertFalse(sessions.contains { $0.rootPID == node.id })
+    }
+
+    func testSuspectedRequiresTTY() throws {
+        let herdr = snapshot(pid: 10, parent: 1, name: "/opt/homebrew/opt/herdr/bin/herdr")
+        let shell = snapshot(pid: 11, parent: 10, name: "/bin/zsh")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [herdr, shell, node])
+        XCTAssertNotEqual(result.agentConfidence, .suspected)
+        XCTAssertNil(result.agentName)
+        XCTAssertNotEqual(result.kind, .agent)
+    }
+
+    func testSuspectedRequiresHostedParentChain() throws {
+        let launchd = snapshot(pid: 1, parent: 0, name: "/sbin/launchd")
+        let shell = snapshot(pid: 11, parent: 1, name: "/bin/zsh", tty: "ttys001")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node", tty: "ttys001")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [launchd, shell, node])
+        XCTAssertNotEqual(result.agentConfidence, .suspected)
+        XCTAssertNotEqual(result.kind, .agent)
+    }
+
+    func testSuspectedHonoursIgnoreNames() throws {
+        AgentCatalog.activate(rules: AgentRules(ignoreNames: ["newagent"]))
+        defer { AgentCatalog.resetToBuiltIn() }
+        let herdr = snapshot(pid: 10, parent: 1, name: "/opt/homebrew/opt/herdr/bin/herdr")
+        let shell = snapshot(pid: 11, parent: 10, name: "/bin/zsh", tty: "ttys001")
+        var node = snapshot(pid: 12, parent: 11, name: "/usr/local/bin/node", tty: "ttys001")
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+
+        let result = try classified(node.id, in: [herdr, shell, node])
+        XCTAssertNotEqual(result.agentConfidence, .suspected)
+        XCTAssertNil(result.agentName)
+    }
+
+    func testClaudeWithTTYUnderLaunchdStaysAgentOrphan() throws {
+        let agent = snapshot(pid: 600, parent: 1, name: "claude", tty: "ttys001")
+
+        let result = try classified(agent.id, in: [agent])
+
+        XCTAssertEqual(result.kind, .agent)
+        XCTAssertEqual(result.orphanReason, .reparentedToLaunchd)
     }
 
     private func classified(_ pid: Int32, in snapshots: [ProcessSnapshot]) throws -> ProcessSnapshot {

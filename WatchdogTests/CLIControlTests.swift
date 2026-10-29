@@ -242,7 +242,11 @@ private final class FakeWorld: @unchecked Sendable {
 
     var signals: [Int32] { lock.withLock { sent } }
 
-    func control(ledger: SuspensionLedger = .inMemory(), pollAttempts: Int = 4) -> CLIControl {
+    func control(
+        ledger: SuspensionLedger = .inMemory(),
+        journal: ActionJournal = .inMemory(),
+        pollAttempts: Int = 4
+    ) -> CLIControl {
         CLIControl(
             lister: { [self] in
                 lock.withLock { exited ? [] : [RawProcessRow(snapshot: process, totalCPUTimeNanoseconds: 0)] }
@@ -260,6 +264,7 @@ private final class FakeWorld: @unchecked Sendable {
                 }
             ),
             ledger: ledger,
+            journal: journal,
             sleep: { _ in },
             terminationPollAttempts: pollAttempts
         )

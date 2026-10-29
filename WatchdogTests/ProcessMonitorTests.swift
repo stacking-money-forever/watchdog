@@ -194,6 +194,41 @@ final class ProcessMonitorTests: XCTestCase {
         XCTAssertTrue(calls.deadlines.allSatisfy { $0 == .milliseconds(1_500) })
     }
 
+    func testResolverLooksUpHeadlessRootsSoTheAppMatchesTheCLI() async {
+        let calls = LockedResolverCalls()
+        let resolver = WorkingDirectoryResolver(
+            policy: resolverPolicy(),
+            runner: { pid, deadline in
+                calls.record(pid: pid, deadline: deadline)
+                return "/projects/\(pid)"
+            }
+        )
+        var service = snapshot(pid: 3_100, name: "/opt/homebrew/bin/ollama")
+        service = ProcessSnapshot(
+            id: service.id, parentPID: 1, processGroupID: service.id, userID: service.userID,
+            tty: "??", cpuPercent: 0, residentBytes: 0, state: "S", elapsed: "00:01",
+            executablePath: service.executablePath, startTimeMicroseconds: service.startTimeMicroseconds
+        )
+        var leftover = snapshot(pid: 3_101, name: "/bin/sh")
+        leftover = ProcessSnapshot(
+            id: leftover.id, parentPID: 1, processGroupID: leftover.id, userID: leftover.userID,
+            tty: "??", cpuPercent: 0, residentBytes: 0, state: "S", elapsed: "00:01",
+            executablePath: leftover.executablePath, startTimeMicroseconds: leftover.startTimeMicroseconds,
+            launchScript: "/private/var/folders/x/T/.tmpA/leftover.sh"
+        )
+        let attached = snapshot(pid: 3_102, name: "/bin/zsh")
+        XCTAssertEqual(service.kind, .service)
+        XCTAssertEqual(leftover.kind, .other)
+        XCTAssertEqual(attached.kind, .other)
+
+        let delivered = expectation(description: "two headless roots")
+        delivered.expectedFulfillmentCount = 2
+        await resolver.resolve([service, leftover, attached], generation: 1) { _ in delivered.fulfill() }
+        await fulfillment(of: [delivered], timeout: 1)
+
+        XCTAssertEqual(Set(calls.pids), [3_100, 3_101])
+    }
+
     func testResolverPositiveAndNegativeCacheTTLsAndPIDReuseIsolation() async {
         let clock = MutableTestInstant()
         let calls = LockedResolverCalls { pid, invocation in

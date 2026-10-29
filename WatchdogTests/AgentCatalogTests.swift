@@ -45,10 +45,10 @@ final class AgentCatalogTests: XCTestCase {
 
     func testProcArgumentsParseNameAndInterpreterScript() throws {
         let node = try XCTUnwrap(parse(argv: ["node", "--use-system-ca", "/n/@google/gemini-cli/bundle/gemini.js", "-p", "hi"]))
-        XCTAssertEqual(node, LaunchCommand(name: "node", script: "/n/@google/gemini-cli/bundle/gemini.js"))
+        XCTAssertEqual(node, LaunchCommand(name: "node", script: "/n/@google/gemini-cli/bundle/gemini.js", subcommand: nil))
 
         let native = try XCTUnwrap(parse(argv: ["claude", "--resume", "abc"]))
-        XCTAssertEqual(native, LaunchCommand(name: "claude", script: nil))
+        XCTAssertEqual(native, LaunchCommand(name: "claude", script: nil, subcommand: nil))
 
         XCTAssertNil(parse(argv: []))
     }
@@ -77,6 +77,41 @@ final class AgentCatalogTests: XCTestCase {
         XCTAssertEqual(child.projectName, "web")
     }
 
+    func testLaunchSubcommandSkipsFlagsAndInterpreterModule() {
+        XCTAssertEqual(AgentCatalog.launchSubcommand(arguments: ["codex", "app-server", "daemon"]), "app-server")
+        XCTAssertEqual(
+            AgentCatalog.launchSubcommand(arguments: ["node", "/n/index.js", "worker-server"]),
+            "worker-server"
+        )
+        XCTAssertEqual(AgentCatalog.launchSubcommand(arguments: ["opencode", "serve", "--service"]), "serve")
+        XCTAssertNil(AgentCatalog.launchSubcommand(arguments: ["python3", "-m", "http.server"]))
+        XCTAssertNil(AgentCatalog.launchSubcommand(arguments: ["claude", "--resume", "x"]))
+    }
+
+    func testMergedCatalogRecognisesUserAgentName() {
+        let catalog = AgentCatalog(
+            builtIn: .builtIn,
+            merging: AgentRules(agentNames: ["fakeagent"])
+        )
+        XCTAssertEqual(catalog.agentName(command: "/tmp/bin/fakeagent", launchScript: nil), "fakeagent")
+        XCTAssertNil(AgentCatalog.builtIn.agentName(command: "/tmp/bin/fakeagent", launchScript: nil))
+    }
+
+    func testMergedCatalogDropsIgnoredBuiltInName() {
+        let catalog = AgentCatalog(
+            builtIn: .builtIn,
+            merging: AgentRules(ignoreNames: ["pi"])
+        )
+        XCTAssertNil(catalog.agentName(command: "pi", launchScript: nil))
+        XCTAssertNil(
+            catalog.agentName(
+                command: "node",
+                launchScript: "/n/lib/node_modules/@mariozechner/pi-coding-agent/dist/cli.js"
+            )
+        )
+        XCTAssertEqual(AgentCatalog.builtIn.agentName(command: "pi", launchScript: nil), "pi")
+    }
+
     func testSleepingProcessIsReportedAsSleeping() {
         XCTAssertEqual(LibprocProcessLister.stateLetter(UInt32(SRUN), runningThreads: 0), "S")
         XCTAssertEqual(LibprocProcessLister.stateLetter(UInt32(SRUN), runningThreads: 2), "R")
@@ -102,7 +137,7 @@ final class AgentCatalogTests: XCTestCase {
         return bytes.withUnsafeBytes { ArgumentReader.parse($0) }
     }
 
-    private static func snapshot(_ command: String, pid: Int32 = 50, parent: Int32 = 1) -> ProcessSnapshot {
+    private static func snapshot(_ command: String, pid: Int32 = 50, parent: Int32 = 10) -> ProcessSnapshot {
         ProcessSnapshot(
             id: pid,
             parentPID: parent,

@@ -1,12 +1,18 @@
 import Darwin
 import Foundation
 
-enum ProcessKind: String, Sendable {
+enum ProcessKind: String, CaseIterable, Equatable, Sendable {
     case agent
+    case service
     case browserRenderer
     case application
     case system
     case other
+}
+
+enum AgentConfidence: String, CaseIterable, Equatable, Sendable {
+    case known
+    case suspected
 }
 
 struct ProcessIdentity: Hashable, Sendable {
@@ -55,11 +61,12 @@ struct ProcessActionability: Sendable {
     }
 }
 
-enum OrphanReason: String, Sendable {
+enum OrphanReason: String, CaseIterable, Sendable {
     case reparentedToLaunchd
     case missingParent
     case cyclicLineage
     case detachedSession
+    case temporaryLaunchPath
 
     var localizedDescription: String {
         switch self {
@@ -71,6 +78,8 @@ enum OrphanReason: String, Sendable {
             return "비정상적인 부모 계보가 감지됐습니다"
         case .detachedSession:
             return "연결된 터미널 세션을 찾을 수 없습니다"
+        case .temporaryLaunchPath:
+            return "임시 폴더에서 시작된 채 남아 있습니다"
         }
     }
 }
@@ -93,9 +102,17 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
     /// For an interpreter process (`node`, `python3`), the script or module
     /// it runs; that is where an npm/pip-installed agent shows its name.
     var launchScript: String? = nil
+    /// First positional after argv[0] (or after the interpreter script).
+    var launchSubcommand: String? = nil
     /// The nearest coding agent this process descends from, when it is not
     /// an agent itself: a build, test run, or MCP server the agent started.
     var agentAncestor: AgentAncestor? = nil
+    /// Set by `OrphanClassifier` when parent information is available.
+    var agentConfidence: AgentConfidence? = nil
+    /// Filled for suspected agents so `agentName` can show the script basename.
+    var classifiedAgentName: String? = nil
+    /// When set, `kind` prefers this over the computed classification.
+    var classifiedKind: ProcessKind? = nil
 
     var identity: ProcessIdentity {
         ProcessIdentity(
@@ -132,7 +149,7 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
 
     /// The coding agent this process is, if any.
     var agentName: String? {
-        AgentCatalog.agentName(command: executablePath, launchScript: launchScript)
+        classifiedAgentName ?? AgentCatalog.agentName(command: executablePath, launchScript: launchScript)
     }
 
     /// `Aside Helper (Renderer)` → `Aside`: a Chromium/Electron renderer.
@@ -144,17 +161,26 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
     }
 
     var kind: ProcessKind {
+        if let classifiedKind { return classifiedKind }
+
         let lowercasePath = executablePath.lowercased()
 
         if executablePath.contains("Helper (Renderer)") {
             return .browserRenderer
         }
 
-        if lowercasePath.hasPrefix("/system/") || lowercasePath.hasPrefix("/usr/libexec/") {
+        if lowercasePath.hasPrefix("/system/")
+            || lowercasePath.hasPrefix("/usr/libexec/")
+            || lowercasePath.hasPrefix("/sbin/")
+            || lowercasePath.hasPrefix("/usr/sbin/") {
             return .system
         }
 
-        if agentName != nil {
+        if isService {
+            return .service
+        }
+
+        if agentName != nil || agentConfidence == .suspected {
             return .agent
         }
 
@@ -163,6 +189,39 @@ struct ProcessSnapshot: Identifiable, Equatable, Sendable {
         }
 
         return .other
+    }
+
+    /// A resident server: known agent server subcommand, or a headless
+    /// (ppid ≤ 1, no TTY) process that was not started from a temp path.
+    var isService: Bool {
+        if agentName != nil,
+           let subcommand = launchSubcommand,
+           AgentCatalog.serviceSubcommands.contains(subcommand) {
+            return true
+        }
+
+        guard parentPID <= 1, tty == "??" else { return false }
+
+        let lowercasePath = executablePath.lowercased()
+        if executablePath.contains("Helper (Renderer)") { return false }
+        if lowercasePath.hasPrefix("/system/")
+            || lowercasePath.hasPrefix("/usr/libexec/")
+            || lowercasePath.hasPrefix("/sbin/")
+            || lowercasePath.hasPrefix("/usr/sbin/") {
+            return false
+        }
+        // Framework Pythons live in `Python.app/Contents/MacOS/Python`.
+        // Those are interpreters, not app processes.
+        if lowercasePath.contains(".app/contents/"), !AgentCatalog.isInterpreter(executablePath) {
+            return false
+        }
+
+        // A named agent reparented to launchd with no TTY is a daemon, even
+        // when it was launched from a temp path (then it is also an orphan).
+        if agentName != nil { return true }
+
+        if LaunchPath.isTemporaryLaunch(of: self) { return false }
+        return true
     }
 
     /// The project folder name: the process's own working directory, or for

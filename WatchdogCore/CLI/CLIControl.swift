@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import OSLog
 
 /// `pid:startMicroseconds:uid` — the exact process a CLI action targets.
 /// A PID alone is reusable; the start time makes the token single-process.
@@ -53,6 +54,15 @@ enum CLIAction: String, CaseIterable, Sendable {
     case resume
     case terminate
     case forceQuit = "force-quit"
+
+    var cliJSONValue: String {
+        switch self {
+        case .suspend: return CLIJSONContract.ControlAction.suspend.rawValue
+        case .resume: return CLIJSONContract.ControlAction.resume.rawValue
+        case .terminate: return CLIJSONContract.ControlAction.terminate.rawValue
+        case .forceQuit: return CLIJSONContract.ControlAction.forceQuit.rawValue
+        }
+    }
 
     var controlAction: ProcessControlAction {
         switch self {
@@ -133,11 +143,11 @@ enum CLIDecision: Equatable, Sendable {
 }
 
 enum CLIExitCode {
-    static let success: Int32 = 0
-    static let failure: Int32 = 1
-    static let usage: Int32 = 2
-    static let blocked: Int32 = 3
-    static let refused: Int32 = 4
+    static let success = CLIJSONContract.ExitCode.success
+    static let failure = CLIJSONContract.ExitCode.failure
+    static let usage = CLIJSONContract.ExitCode.usage
+    static let blocked = CLIJSONContract.ExitCode.blocked
+    static let refused = CLIJSONContract.ExitCode.refused
 }
 
 enum CLIPolicy {
@@ -169,7 +179,7 @@ enum CLIPolicy {
             case .suspend:
                 if live.kind != .agent {
                     warnings.append(
-                        "\(live.displayName)은(는) 코딩 에이전트가 아닙니다(\(live.kind.rawValue)). 앱을 정지하면 응답하지 않게 됩니다. resume으로 되돌릴 수 있습니다."
+                        "\(live.displayName)은(는) 코딩 에이전트가 아닙니다(\(live.kind.cliJSONValue)). 앱을 정지하면 응답하지 않게 됩니다. resume으로 되돌릴 수 있습니다."
                     )
                 }
                 if live.isSuspended {
@@ -226,6 +236,24 @@ struct CLIActionReport: Sendable {
     let name: String
     let outcome: ProcessActionOutcome
     let warnings: [String]
+    /// Other session members resumed because this identity was the group root.
+    let accompanying: [CLIActionReport]
+
+    init(
+        action: CLIAction,
+        token: IdentityToken,
+        name: String,
+        outcome: ProcessActionOutcome,
+        warnings: [String],
+        accompanying: [CLIActionReport] = []
+    ) {
+        self.action = action
+        self.token = token
+        self.name = name
+        self.outcome = outcome
+        self.warnings = warnings
+        self.accompanying = accompanying
+    }
 }
 
 /// Executes a CLI action through the same safety pipeline as the app: a fresh
@@ -239,19 +267,24 @@ struct CLIControl: Sendable {
     let lister: Lister
     let controller: ProcessController
     let ledger: SuspensionLedger
+    let journal: ActionJournal
     let sleep: Sleeper
     let terminationPollAttempts: Int
+
+    private static let log = Logger(subsystem: "dev.justn.watchdog", category: "journal")
 
     init(
         lister: @escaping Lister = { try LibprocProcessLister.list() },
         controller: ProcessController = ProcessController(),
         ledger: SuspensionLedger = .standard(),
+        journal: ActionJournal = .standard(),
         sleep: @escaping Sleeper = { try? await Task.sleep(for: $0) },
         terminationPollAttempts: Int = 20
     ) {
         self.lister = lister
         self.controller = controller
         self.ledger = ledger
+        self.journal = journal
         self.sleep = sleep
         self.terminationPollAttempts = terminationPollAttempts
     }
@@ -266,7 +299,56 @@ struct CLIControl: Sendable {
         case failed(ProcessControlError, refused: Bool)
     }
 
-    func run(_ action: CLIAction, target: CLITarget, force: Bool) async throws -> Result {
+    func run(
+        _ action: CLIAction,
+        target: CLITarget,
+        force: Bool,
+        groupID: String? = nil
+    ) async throws -> Result {
+        let companions: [SuspensionRecord]
+        if action == .resume, let live = try observe(target.pid) {
+            companions = ledger.groupCompanions(of: live.identity)
+        } else {
+            companions = []
+        }
+        let result = try await perform(
+            action,
+            target: target,
+            force: force,
+            groupID: groupID
+        )
+        guard action == .resume, case let .performed(report) = result, !companions.isEmpty else {
+            return result
+        }
+        var accompanying: [CLIActionReport] = []
+        for companion in companions {
+            let extra = try await perform(
+                .resume,
+                target: .token(IdentityToken(companion.identity)),
+                force: true
+            )
+            if case let .performed(memberReport) = extra {
+                accompanying.append(memberReport)
+            }
+        }
+        return .performed(
+            CLIActionReport(
+                action: report.action,
+                token: report.token,
+                name: report.name,
+                outcome: report.outcome,
+                warnings: report.warnings,
+                accompanying: accompanying
+            )
+        )
+    }
+
+    private func perform(
+        _ action: CLIAction,
+        target: CLITarget,
+        force: Bool,
+        groupID: String? = nil
+    ) async throws -> Result {
         let clock = ContinuousClock()
         let live = try observe(target.pid)
         let observation = ObservationToken(generation: 1, instant: clock.now)
@@ -302,7 +384,8 @@ struct CLIControl: Sendable {
                             identity: live.identity,
                             executablePath: live.executablePath,
                             suspendedAt: Date(),
-                            source: .cli
+                            source: .cli,
+                            groupID: groupID
                         )
                     )
                 } catch {
@@ -318,6 +401,9 @@ struct CLIControl: Sendable {
             if case let .partiallyApplied(delivered, _) = error, delivered.contains(SIGCONT) {
                 _ = try? ledger.remove(live.identity)
             }
+            if error.didSendSignal {
+                recordJournal(action: action, live: live, outcome: .failed(error.localizedDescription))
+            }
             return .failed(error, refused: Self.isRefusal(error))
         }
 
@@ -332,6 +418,7 @@ struct CLIControl: Sendable {
             _ = try? ledger.remove(live.identity)
             outcome = await awaitTermination(live.identity)
         }
+        recordJournal(action: action, live: live, outcome: outcome)
         return .performed(
             CLIActionReport(
                 action: action,
@@ -372,6 +459,35 @@ struct CLIControl: Sendable {
             return isRefusal(failure)
         default:
             return false
+        }
+    }
+
+    private func recordJournal(
+        action: CLIAction,
+        live: ProcessSnapshot,
+        outcome: ProcessActionOutcome
+    ) {
+        let undoOf: UUID?
+        if action == .resume {
+            undoOf = journal.all().last {
+                $0.pid == live.id
+                    && $0.startTimeMicroseconds == live.startTimeMicroseconds
+                    && $0.action == .suspend
+            }?.id
+        } else {
+            undoOf = nil
+        }
+        let entry = ActionJournalEntry(
+            source: .cli,
+            action: action.controlAction,
+            process: live,
+            outcome: outcome,
+            undoOf: undoOf
+        )
+        do {
+            try journal.append(entry)
+        } catch {
+            Self.log.error("ActionJournal append failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

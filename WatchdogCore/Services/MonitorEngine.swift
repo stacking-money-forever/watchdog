@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Detection settings shared by the menu bar app and the CLI. Values are
@@ -12,6 +13,12 @@ struct MonitorSettings: Equatable, Sendable {
         static let memoryThresholdGB = "memoryThresholdGB"
         static let notificationsEnabled = "notificationsEnabled"
         static let autoSuspendEnabled = "autoSuspendEnabled"
+        static let autoSuspendScope = "autoSuspendScope"
+    }
+
+    enum AutoSuspendScope: String, CaseIterable, Codable, Sendable {
+        case agent
+        case session
     }
 
     /// Below-threshold samples keep existing CPU evidence while they stay at or
@@ -24,17 +31,20 @@ struct MonitorSettings: Equatable, Sendable {
     var sustainedDuration: Double
     var memoryThresholdGB: Double
     var autoSuspendEnabled: Bool
+    var autoSuspendScope: AutoSuspendScope
 
     init(
         cpuThreshold: Double = 100,
         sustainedDuration: Double = 20,
         memoryThresholdGB: Double = 2,
-        autoSuspendEnabled: Bool = false
+        autoSuspendEnabled: Bool = false,
+        autoSuspendScope: AutoSuspendScope = .agent
     ) {
         self.cpuThreshold = Self.normalizedCPU(cpuThreshold)
         self.sustainedDuration = Self.normalizedDuration(sustainedDuration)
         self.memoryThresholdGB = Self.normalizedMemory(memoryThresholdGB)
         self.autoSuspendEnabled = autoSuspendEnabled
+        self.autoSuspendScope = autoSuspendScope
     }
 
     init(defaults: UserDefaults) {
@@ -42,7 +52,8 @@ struct MonitorSettings: Equatable, Sendable {
             cpuThreshold: defaults.object(forKey: Keys.threshold) as? Double ?? 100,
             sustainedDuration: defaults.object(forKey: Keys.sustainedDuration) as? Double ?? 20,
             memoryThresholdGB: defaults.object(forKey: Keys.memoryThresholdGB) as? Double ?? 2,
-            autoSuspendEnabled: defaults.object(forKey: Keys.autoSuspendEnabled) as? Bool ?? false
+            autoSuspendEnabled: defaults.object(forKey: Keys.autoSuspendEnabled) as? Bool ?? false,
+            autoSuspendScope: AutoSuspendScope(rawValue: defaults.string(forKey: Keys.autoSuspendScope) ?? "") ?? .agent
         )
     }
 
@@ -66,6 +77,13 @@ struct MonitorSettings: Equatable, Sendable {
     }
 }
 
+/// A session Watchdog may stop as a unit: the eligible root plus members
+/// that are safe to SIGSTOP (not protected, not already stopped, same user).
+struct AutoSuspendGroup: Equatable, Sendable {
+    let root: ProcessIdentity
+    let members: [ProcessSnapshot]
+}
+
 /// Result of feeding one successful sample into the engine.
 struct MonitorUpdate: Sendable {
     /// Classified snapshots in a stable display order.
@@ -76,6 +94,41 @@ struct MonitorUpdate: Sendable {
     let newlyHighMemory: Set<ProcessIdentity>
     /// Processes that auto-suspend may stop now (only when enabled).
     let autoSuspendCandidates: [ProcessSnapshot]
+    /// Agent/service session totals. Empty when the caller did not ingest
+    /// through `MonitorEngine` (preview helpers keep the process-only path).
+    let sessions: [AgentSession]
+    let hotSessions: Set<ProcessIdentity>
+    let highMemorySessions: Set<ProcessIdentity>
+    let newlyHotSessions: Set<ProcessIdentity>
+    /// Session-scope auto-suspend targets. Empty unless auto-suspend is on
+    /// and `autoSuspendScope` is `.session`.
+    let autoSuspendGroups: [AutoSuspendGroup]
+
+    init(
+        processes: [ProcessSnapshot],
+        hot: Set<ProcessIdentity>,
+        highMemory: Set<ProcessIdentity>,
+        newlyHot: Set<ProcessIdentity>,
+        newlyHighMemory: Set<ProcessIdentity>,
+        autoSuspendCandidates: [ProcessSnapshot],
+        sessions: [AgentSession] = [],
+        hotSessions: Set<ProcessIdentity> = [],
+        highMemorySessions: Set<ProcessIdentity> = [],
+        newlyHotSessions: Set<ProcessIdentity> = [],
+        autoSuspendGroups: [AutoSuspendGroup] = []
+    ) {
+        self.processes = processes
+        self.hot = hot
+        self.highMemory = highMemory
+        self.newlyHot = newlyHot
+        self.newlyHighMemory = newlyHighMemory
+        self.autoSuspendCandidates = autoSuspendCandidates
+        self.sessions = sessions
+        self.hotSessions = hotSessions
+        self.highMemorySessions = highMemorySessions
+        self.newlyHotSessions = newlyHotSessions
+        self.autoSuspendGroups = autoSuspendGroups
+    }
 }
 
 /// The UI-free detection state machine: orphan classification, sustained
@@ -92,6 +145,8 @@ struct MonitorEngine: Sendable {
 
     private var hotTracker: HotProcessTracker
     private var memoryTracker: MemoryProcessTracker
+    private var sessionHotTracker: HotProcessTracker
+    private var sessionMemoryTracker: MemoryProcessTracker
 
     /// `continuityGap` is the longest gap between samples that still counts
     /// as continuous evidence. It must exceed the sampling interval, or a
@@ -100,12 +155,18 @@ struct MonitorEngine: Sendable {
     init(continuityGap: Duration = .seconds(5)) {
         hotTracker = HotProcessTracker(continuityGap: continuityGap)
         memoryTracker = MemoryProcessTracker(continuityGap: continuityGap)
+        sessionHotTracker = HotProcessTracker(continuityGap: continuityGap)
+        sessionMemoryTracker = MemoryProcessTracker(continuityGap: continuityGap)
     }
     /// Evidence (unmasked) from the previous sample. Ignoring masks the output
     /// without discarding evidence, so undo restores a flag that survives the
     /// next sample.
     private var rawHot: Set<ProcessIdentity> = []
     private var rawHighMemory: Set<ProcessIdentity> = []
+    private var rawHotSessions: Set<ProcessIdentity> = []
+    private var rawHighMemorySessions: Set<ProcessIdentity> = []
+    private(set) var hotSessions: Set<ProcessIdentity> = []
+    private(set) var highMemorySessions: Set<ProcessIdentity> = []
     private var enrichment: [ProcessIdentity: Enrichment] = [:]
 
     private struct Enrichment: Sendable {
@@ -120,7 +181,7 @@ struct MonitorEngine: Sendable {
         settings: MonitorSettings,
         at instant: ContinuousClock.Instant
     ) -> MonitorUpdate {
-        var snapshots = OrphanClassifier.classify(rawSnapshots)
+        var snapshots = rawSnapshots
         let liveIdentities = Set(snapshots.map(\.identity))
 
         // A full enumeration that no longer contains an identity means that
@@ -129,22 +190,28 @@ struct MonitorEngine: Sendable {
         userResumed.formIntersection(liveIdentities)
         enrichment = enrichment.filter { liveIdentities.contains($0.key) }
 
-        // Carry enrichment across samples so the project name and worktree
-        // badge do not blink while the asynchronous lookups re-run.
+        // Working directory participates in temporary-path orphan detection,
+        // so carry it before classification. Worktree badges are display-only
+        // and merge afterwards.
         for index in snapshots.indices {
             guard let carried = enrichment[snapshots[index].identity] else { continue }
             if snapshots[index].workingDirectory == nil {
                 snapshots[index].workingDirectory = carried.workingDirectory
             }
+        }
+        snapshots = OrphanClassifier.classify(snapshots)
+        for index in snapshots.indices {
+            guard let carried = enrichment[snapshots[index].identity] else { continue }
             if snapshots[index].worktreeState == nil,
                carried.worktreeState?.path == snapshots[index].workingDirectory {
                 snapshots[index].worktreeState = carried.worktreeState
             }
         }
-        // Classification ran before enrichment; give descendants their
-        // agent's (carried) working directory so they show its project.
+        // Give descendants their agent's (carried) working directory so they
+        // show its project. Service roots are session roots too.
         let agentDirectories = Dictionary(
-            snapshots.lazy.filter { $0.kind == .agent }.map { ($0.id, $0.workingDirectory) },
+            snapshots.lazy.filter { $0.kind == .agent || $0.kind == .service }
+                .map { ($0.id, $0.workingDirectory) },
             uniquingKeysWith: { first, _ in first }
         )
         for index in snapshots.indices {
@@ -171,21 +238,67 @@ struct MonitorEngine: Sendable {
             at: instant
         )
 
+        let sessions = SessionAggregator.sessions(from: snapshots)
+        let byIdentity = Dictionary(
+            snapshots.map { ($0.identity, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let sessionSnapshots: [ProcessSnapshot] = sessions.compactMap { session in
+            guard var root = byIdentity[session.id] else { return nil }
+            root.cpuPercent = session.cpuPercent
+            root.residentBytes = session.residentBytes
+            return root
+        }
+        rawHotSessions = sessionHotTracker.update(
+            snapshots: sessionSnapshots,
+            threshold: settings.cpuThreshold,
+            releaseFraction: MonitorSettings.cpuReleaseFraction,
+            sustainedFor: settings.sustainedDuration,
+            ignoredProcesses: [],
+            at: instant
+        )
+        rawHighMemorySessions = sessionMemoryTracker.update(
+            snapshots: sessionSnapshots,
+            thresholdBytes: settings.memoryThresholdBytes,
+            releaseFraction: MonitorSettings.memoryReleaseFraction,
+            sustainedFor: settings.sustainedDuration,
+            ignoredProcesses: [],
+            at: instant
+        )
+
         let previousHot = hot
         let previousHighMemory = highMemory
+        let previousHotSessions = hotSessions
         hot = rawHot.subtracting(ignored)
         highMemory = rawHighMemory.subtracting(ignored)
+        hotSessions = rawHotSessions.subtracting(ignored)
+        highMemorySessions = rawHighMemorySessions.subtracting(ignored)
         let newlyHot = hot.subtracting(previousHot)
         let newlyHighMemory = highMemory.subtracting(previousHighMemory)
+        let newlyHotSessions = hotSessions.subtracting(previousHotSessions)
 
         let candidates: [ProcessSnapshot]
+        let groups: [AutoSuspendGroup]
         if settings.autoSuspendEnabled {
-            candidates = snapshots.filter {
-                newlyHot.contains($0.identity) && Self.isAutoSuspendEligible($0)
-                    && !userResumed.contains($0.identity)
+            switch settings.autoSuspendScope {
+            case .agent:
+                candidates = snapshots.filter {
+                    newlyHot.contains($0.identity) && Self.isAutoSuspendEligible($0)
+                        && !userResumed.contains($0.identity)
+                }
+                groups = []
+            case .session:
+                candidates = []
+                groups = Self.autoSuspendGroups(
+                    sessions: sessions,
+                    newlyHotSessions: newlyHotSessions,
+                    byIdentity: byIdentity,
+                    userResumed: userResumed
+                )
             }
         } else {
             candidates = []
+            groups = []
         }
 
         return MonitorUpdate(
@@ -194,7 +307,12 @@ struct MonitorEngine: Sendable {
             highMemory: highMemory,
             newlyHot: newlyHot,
             newlyHighMemory: newlyHighMemory,
-            autoSuspendCandidates: candidates
+            autoSuspendCandidates: candidates,
+            sessions: sessions,
+            hotSessions: hotSessions,
+            highMemorySessions: highMemorySessions,
+            newlyHotSessions: newlyHotSessions,
+            autoSuspendGroups: groups
         )
     }
 
@@ -202,17 +320,80 @@ struct MonitorEngine: Sendable {
     mutating func samplingFailed() {
         hotTracker.reset()
         memoryTracker.reset()
+        sessionHotTracker.reset()
+        sessionMemoryTracker.reset()
         rawHot.removeAll()
         rawHighMemory.removeAll()
+        rawHotSessions.removeAll()
+        rawHighMemorySessions.removeAll()
         hot.removeAll()
         highMemory.removeAll()
+        hotSessions.removeAll()
+        highMemorySessions.removeAll()
     }
 
     /// Auto-suspend only stops a coding agent whose CPU stayed high. Memory
     /// alone never qualifies: SIGSTOP frees no memory, and it would freeze
     /// ordinary apps (Xcode, browsers) above the memory threshold.
+    /// Services stay resident by design (launchd daemons, `serve`/`app-server`);
+    /// never auto-stop them.
     static func isAutoSuspendEligible(_ snapshot: ProcessSnapshot) -> Bool {
-        snapshot.kind == .agent && !snapshot.isProtected && !snapshot.isSuspended
+        snapshot.kind == .agent
+            && snapshot.agentConfidence != .suspected
+            && !snapshot.isProtected
+            && !snapshot.isSuspended
+    }
+
+    /// Session-scope candidates: a newly hot session whose root is an eligible
+    /// known agent. Stopping only descendants would freeze the agent on I/O,
+    /// so the root is always included when the group is emitted.
+    static func autoSuspendGroups(
+        sessions: [AgentSession],
+        newlyHotSessions: Set<ProcessIdentity>,
+        byIdentity: [ProcessIdentity: ProcessSnapshot],
+        userResumed: Set<ProcessIdentity>
+    ) -> [AutoSuspendGroup] {
+        let byPID = Dictionary(
+            byIdentity.values.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        var groups: [AutoSuspendGroup] = []
+        for session in sessions where newlyHotSessions.contains(session.id) {
+            guard let root = byIdentity[session.id],
+                  isAutoSuspendEligible(root),
+                  !userResumed.contains(session.id)
+            else { continue }
+            let members = session.members.compactMap { byIdentity[$0] }.filter { member in
+                member.id != root.id
+                    && !member.isProtected
+                    && !member.isSuspended
+                    && member.userID == getuid()
+                    && reachesAncestor(from: member.parentPID, ancestor: root.id, byPID: byPID)
+            }
+            groups.append(AutoSuspendGroup(root: session.id, members: members))
+        }
+        return groups
+    }
+
+    /// Walk `parentPID` at most 24 hops. Used so a session group can never
+    /// include the root's ancestors or siblings, even if they were listed as
+    /// session members.
+    static func reachesAncestor(
+        from startPID: Int32,
+        ancestor ancestorPID: Int32,
+        byPID: [Int32: ProcessSnapshot],
+        limit: Int = 24
+    ) -> Bool {
+        var pid = startPID
+        var hops = 0
+        var seen: Set<Int32> = []
+        while pid > 1, hops < limit, seen.insert(pid).inserted {
+            if pid == ancestorPID { return true }
+            guard let node = byPID[pid] else { return false }
+            pid = node.parentPID
+            hops += 1
+        }
+        return pid == ancestorPID
     }
 
     /// Stable order: orphans first, then CPU (bucketed to whole percent so
@@ -243,6 +424,8 @@ struct MonitorEngine: Sendable {
         ignored.insert(identity)
         hot.remove(identity)
         highMemory.remove(identity)
+        hotSessions.remove(identity)
+        highMemorySessions.remove(identity)
         return .ignored
     }
 
@@ -252,6 +435,8 @@ struct MonitorEngine: Sendable {
         guard ignored.remove(identity) != nil else { return false }
         if rawHot.contains(identity) { hot.insert(identity) }
         if rawHighMemory.contains(identity) { highMemory.insert(identity) }
+        if rawHotSessions.contains(identity) { hotSessions.insert(identity) }
+        if rawHighMemorySessions.contains(identity) { highMemorySessions.insert(identity) }
         return true
     }
 

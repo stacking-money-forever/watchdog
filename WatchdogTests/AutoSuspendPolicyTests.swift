@@ -82,6 +82,83 @@ final class AutoSuspendPolicyTests: XCTestCase {
         XCTAssertTrue(recorded.isEmpty)
     }
 
+    func testSessionGroupStopsRootThenMembersAndRecordsGroupID() async throws {
+        let signals = SignalRecorder()
+        let root = snapshot(pid: 7_010, name: "/usr/local/bin/claude", cpu: 10)
+        let childA = snapshot(pid: 7_011, name: "/usr/bin/yes", cpu: 50)
+        let childB = snapshot(pid: 7_012, name: "/usr/bin/yes", cpu: 50)
+        let ledger = SuspensionLedger.inMemory()
+        let controller = makeController(signals: signals, processes: [root, childA, childB])
+        let monitor = ProcessMonitor(defaults: makeDefaults(), ledger: ledger, controller: controller)
+        monitor.autoSuspendEnabled = true
+        monitor.autoSuspendScope = .session
+
+        let snapshots = [root, childA, childB]
+        monitor.loadActionablePreview(processes: snapshots, hotProcesses: [], updatedAt: Date())
+        await monitor.refreshAutoSuspendPreview(
+            hot: [],
+            highMemory: [],
+            snapshots: snapshots,
+            autoSuspendGroups: [
+                AutoSuspendGroup(root: root.identity, members: [childA, childB])
+            ],
+            sessions: [
+                AgentSession(
+                    id: root.identity,
+                    rootPID: root.id,
+                    name: "claude",
+                    kind: .agent,
+                    workingDirectory: nil,
+                    projectName: nil,
+                    members: [childA.identity, childB.identity],
+                    memberCount: 2,
+                    cpuPercent: 110,
+                    residentBytes: 0,
+                    isSuspended: false,
+                    elapsed: "00:10"
+                )
+            ]
+        )
+
+        XCTAssertEqual(signals.values.map(\.pid), [root.id, childA.id, childB.id])
+        XCTAssertEqual(signals.values.map(\.signal), [SIGSTOP, SIGSTOP, SIGSTOP])
+        let groupID = IdentityToken(root.identity).description
+        XCTAssertEqual(Set(ledger.all().map(\.groupID)), [groupID])
+        XCTAssertEqual(ledger.all().count, 3)
+    }
+
+    func testResumingSessionRootResumesGroupedMembers() async throws {
+        let signals = SignalRecorder()
+        let root = snapshot(pid: 7_020, name: "/usr/local/bin/claude", state: "T")
+        let childA = snapshot(pid: 7_021, name: "/usr/bin/yes", state: "T")
+        let childB = snapshot(pid: 7_022, name: "/usr/bin/yes", state: "T")
+        let ledger = SuspensionLedger.inMemory()
+        let groupID = IdentityToken(root.identity).description
+        for process in [root, childA, childB] {
+            try ledger.record(
+                SuspensionRecord(
+                    identity: process.identity,
+                    executablePath: process.executablePath,
+                    suspendedAt: Date(),
+                    source: .auto,
+                    groupID: groupID
+                )
+            )
+        }
+        let controller = makeController(signals: signals, processes: [root, childA, childB])
+        let monitor = ProcessMonitor(defaults: makeDefaults(), ledger: ledger, controller: controller)
+        monitor.loadActionablePreview(processes: [root, childA, childB], hotProcesses: [], updatedAt: Date())
+
+        monitor.resume(root)
+        for _ in 0..<50 where ledger.all().count > 0 {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(signals.values.map(\.signal), [SIGCONT, SIGCONT, SIGCONT])
+        XCTAssertEqual(Set(signals.values.map(\.pid)), [root.id, childA.id, childB.id])
+        XCTAssertTrue(ledger.all().isEmpty)
+    }
+
     func testAutoSuspendedProcessRemainsReachableForManualResume() async throws {
         let signals = SignalRecorder()
         let running = snapshot(pid: 7_005, name: "/usr/local/bin/claude", cpu: 180)
@@ -109,18 +186,19 @@ final class AutoSuspendPolicyTests: XCTestCase {
         signals: SignalRecorder,
         facts process: ProcessSnapshot
     ) -> ProcessController {
-        ProcessController(
-            factsReader: { _ in
-                .found(
-                    LiveProcessFacts(
-                        identity: process.identity,
-                        executablePath: process.executablePath,
-                        isSuspended: process.isSuspended
-                    )
-                )
-            },
+        makeController(signals: signals, processes: [process])
+    }
+
+    private func makeController(
+        signals: SignalRecorder,
+        processes: [ProcessSnapshot]
+    ) -> ProcessController {
+        let box = ProcessFactsBox(processes)
+        return ProcessController(
+            factsReader: { pid in box.lookup(pid) },
             signalSender: { pid, signal in
                 signals.record(pid: pid, signal: signal)
+                box.apply(pid: pid, signal: signal)
                 return 0
             }
         )
@@ -170,6 +248,37 @@ private final class SignalRecorder: @unchecked Sendable {
     func record(pid: Int32, signal: Int32) {
         lock.withLock {
             storage.append((pid: pid, signal: signal))
+        }
+    }
+}
+
+private final class ProcessFactsBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var processes: [Int32: ProcessSnapshot]
+    private var stopped: [Int32: Bool]
+
+    init(_ processes: [ProcessSnapshot]) {
+        self.processes = Dictionary(uniqueKeysWithValues: processes.map { ($0.id, $0) })
+        stopped = Dictionary(uniqueKeysWithValues: processes.map { ($0.id, $0.isSuspended) })
+    }
+
+    func lookup(_ pid: Int32) -> LiveProcessLookup {
+        lock.withLock {
+            guard let process = processes[pid] else { return .absent }
+            return .found(
+                LiveProcessFacts(
+                    identity: process.identity,
+                    executablePath: process.executablePath,
+                    isSuspended: stopped[pid] ?? process.isSuspended
+                )
+            )
+        }
+    }
+
+    func apply(pid: Int32, signal: Int32) {
+        lock.withLock {
+            if signal == SIGSTOP { stopped[pid] = true }
+            if signal == SIGCONT { stopped[pid] = false }
         }
     }
 }

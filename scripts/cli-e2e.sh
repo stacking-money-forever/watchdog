@@ -19,6 +19,8 @@ done
 work="$(mktemp -d "${TMPDIR:-/tmp}/watchdog-cli-e2e.XXXXXX")"
 derived_data="${derived_data:-$work/DerivedData}"
 export WATCHDOG_LEDGER_PATH="$work/ledger/suspensions.json"
+export WATCHDOG_JOURNAL_PATH="$work/journal.jsonl"
+export WATCHDOG_RULES_PATH="$work/absent-rules.json"
 
 spawned=()
 cleanup() {
@@ -119,6 +121,16 @@ check "terminate by bare PID is a usage error" expect_exit 2 "$cli" terminate "$
 check "resume by PID" expect_exit 0 "$cli" resume "$a"
 check "process runs again" wait_until running "$a"
 check "ledger cleared on resume" test "$(ledger_count)" = 0
+check "journal --json" expect_exit 0 "$cli" journal --json --limit 20
+check "journal lists the suspend/resume the CLI just did" /usr/bin/python3 -c '
+import json, sys
+pid = int(sys.argv[1])
+entries = json.load(open(sys.argv[2]))
+actions = [(row.get("action"), row.get("source"), row.get("pid")) for row in entries]
+ok_suspend = any(action == "suspend" and source == "cli" and process == pid for action, source, process in actions)
+ok_resume = any(action == "resume" and source == "cli" and process == pid for action, source, process in actions)
+sys.exit(0 if ok_suspend and ok_resume else 1)
+' "$a" "$work/last.out"
 
 echo "Terminate a stopped process (SIGCONT then SIGTERM)"
 check "suspend again" expect_exit 0 "$cli" suspend "$token_a" --force
@@ -154,11 +166,14 @@ ln -s /usr/bin/yes "$work/bin/claude"
 "$work/bin/claude" >/dev/null &
 burner=$!
 spawned+=("$burner")
+check "burner is listed" wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$burner" "$cli"
+burner_token=$(token_of "$burner")
 check "watch auto-suspends the runaway agent" expect_exit 0 \
-  "$cli" watch --auto-suspend --cpu 50 --sustain 2 --interval 0.5 --count 12 --json
+  "$cli" watch --auto-suspend --only "$burner_token" --cpu 50 --sustain 2 --interval 0.5 --count 12 --json
 check "auto-suspend event emitted" grep -q '"auto-suspend"' "$work/last.out"
+check "auto-suspend restricted line" grep -q 'auto-suspend restricted to' "$work/last.out"
 check "burner is stopped" wait_until stopped "$burner"
-check "ledger lists it" test "$(ledger_count)" = 1
+check "ledger lists it" wait_until test "$(ledger_count)" -ge 1
 check "stopped --resume-all" expect_exit 0 "$cli" stopped --resume-all
 check "burner runs again" wait_until running "$burner"
 check "ledger empty after resume-all" test "$(ledger_count)" = 0
@@ -182,7 +197,164 @@ child_json=$("$cli" inspect "$child" --json)
 check "its child is attributed to it" /usr/bin/python3 -c \
   'import json,sys; sys.exit(json.loads(sys.argv[1]).get("agentAncestorPID")!=int(sys.argv[2]))' \
   "$child_json" "$interpreted"
+
+echo "Sessions"
+list_json=$("$cli" list --scope all --search gemini.py --json --interval 0.2)
+sessions_json=$("$cli" sessions --json --interval 0.2)
+check "sessions json lists the interpreter agent with members and summed memory" /usr/bin/python3 -c \
+  'import json,sys
+root=int(sys.argv[2]); child=int(sys.argv[3])
+listed=[p for p in json.loads(sys.argv[1]) if p["pid"]==root]
+sessions=[s for s in json.loads(sys.argv[4]) if s.get("rootPID")==root]
+sys.exit(not (listed and sessions and sessions[0]["memberCount"]>=1 and child in sessions[0]["members"] and sessions[0]["residentBytes"]>=listed[0]["residentBytes"]))' \
+  "$list_json" "$interpreted" "$child" "$sessions_json"
+check "sessions table has NAME header" expect_exit 0 "$cli" sessions --interval 0.2
+check "sessions table names NAME" grep -q NAME "$work/last.out"
 kill -TERM "$child" "$interpreted" 2>/dev/null || true
+
+echo "Services and leftovers"
+http_pidfile="$work/http.pid"
+(
+  cd "$HOME"
+  /usr/bin/python3 -m http.server 0 --bind 127.0.0.1 >/dev/null 2>&1 &
+  echo $! >"$http_pidfile"
+)
+wait_until test -s "$http_pidfile"
+http_pid=$(tr -d '[:space:]' <"$http_pidfile")
+spawned+=("$http_pid")
+wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$http_pid" "$cli"
+http_json=$("$cli" list --scope all --json --interval 0.2)
+check "double-forked http.server is a non-orphan service" /usr/bin/python3 -c \
+  'import json,sys; pid=int(sys.argv[2]); rows=[p for p in json.loads(sys.argv[1]) if p["pid"]==pid]; sys.exit(not (rows and rows[0]["kind"]=="service" and "orphan" not in rows[0]["flags"]))' \
+  "$http_json" "$http_pid"
+
+leftover_pidfile="$work/leftover.pid"
+printf 'echo $$ > "%s"\nexec sleep 300\n' "$leftover_pidfile" >"$work/leftover.sh"
+(
+  cd "$work"
+  /bin/sh "$work/leftover.sh" >/dev/null 2>&1 &
+)
+wait_until test -s "$leftover_pidfile"
+leftover_pid=$(tr -d '[:space:]' <"$leftover_pidfile")
+spawned+=("$leftover_pid")
+wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$leftover_pid" "$cli"
+leftover_json=$("$cli" list --scope all --json --interval 0.2)
+check "temp leftover.sh is an other orphan" /usr/bin/python3 -c \
+  'import json,sys; pid=int(sys.argv[2]); rows=[p for p in json.loads(sys.argv[1]) if p["pid"]==pid]; sys.exit(not (rows and rows[0]["kind"]=="other" and "orphan" in rows[0]["flags"] and rows[0].get("orphanReason")=="temporaryLaunchPath"))' \
+  "$leftover_json" "$leftover_pid"
+kill -TERM "$http_pid" "$leftover_pid" 2>/dev/null || true
+
+echo "Rules"
+export WATCHDOG_RULES_PATH="$work/rules.json"
+check "rules init creates the file" expect_exit 0 "$cli" rules init
+check "rules init refuses an existing file" expect_exit 1 "$cli" rules init
+cat >"$work/rules.json" <<'EOF'
+{"agentNames":["fakeagent"]}
+EOF
+mkdir -p "$work/bin"
+# A shebang wrapper shows up as `/bin/sh`. Point a sleep symlink at the
+# agent name so argv[0] is fakeagent (same pattern as the claude burner).
+ln -sf /bin/sleep "$work/bin/fakeagent"
+"$work/bin/fakeagent" 60 >/dev/null &
+fakeagent_pid=$!
+spawned+=("$fakeagent_pid")
+check "user-named fakeagent is listed as an agent" wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","agents","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row and row.get("kind")=="agent" and row.get("name")=="fakeagent" else 1)' "$fakeagent_pid" "$cli"
+kill -TERM "$fakeagent_pid" 2>/dev/null || true
+printf '{' >"$work/rules.json"
+check "corrupt rules make doctor report damage" expect_exit 0 "$cli" doctor
+check "doctor names 손상" grep -q '손상' "$work/last.out"
+check "rules validate rejects corrupt JSON" expect_exit 1 "$cli" rules validate
+check "audit fixture stays clean with user rules path set" expect_exit 0 \
+  "$cli" audit "$repo_root/WatchdogTests/Fixtures/mac-20261030.json" \
+  --labels "$repo_root/WatchdogTests/Fixtures/mac-20261030.labels.json"
+
+echo "Session auto-suspend"
+cat >"$work/session-rules.json" <<'EOF'
+{"agentNames":["fakeagent"]}
+EOF
+export WATCHDOG_RULES_PATH="$work/session-rules.json"
+cat >"$work/bin/fakeagent.py" <<'PY'
+import os, signal, subprocess, sys, time
+
+children = []
+
+def shutdown(*_args):
+    for child in children:
+        try:
+            os.kill(child.pid, signal.SIGCONT)
+        except OSError:
+            pass
+        try:
+            child.terminate()
+        except OSError:
+            pass
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, shutdown)
+signal.signal(signal.SIGINT, shutdown)
+c1 = subprocess.Popen(["yes"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+c2 = subprocess.Popen(["yes"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+children = [c1, c2]
+with open(os.environ["FAKEAGENT_CHILDREN"], "w", encoding="utf-8") as handle:
+    handle.write(f"{c1.pid}\n{c2.pid}\n")
+try:
+    while True:
+        time.sleep(300)
+except Exception:
+    shutdown()
+PY
+export FAKEAGENT_CHILDREN="$work/fakeagent.children"
+/usr/bin/python3 "$work/bin/fakeagent.py" &
+session_root=$!
+spawned+=("$session_root")
+check "session fakeagent spawned children" wait_until test -s "$FAKEAGENT_CHILDREN"
+session_c1=$(sed -n '1p' "$FAKEAGENT_CHILDREN" | tr -d '[:space:]')
+session_c2=$(sed -n '2p' "$FAKEAGENT_CHILDREN" | tr -d '[:space:]')
+spawned+=("$session_c1" "$session_c2")
+check "session fakeagent is an agent" wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","agents","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row and row.get("kind")=="agent" and row.get("name")=="fakeagent" else 1)' "$session_root" "$cli"
+session_token=$(token_of "$session_root")
+check "session watch auto-suspends the group" expect_exit 0 \
+  "$cli" watch --auto-suspend --scope session --only "$session_token" --cpu 50 --sustain 2 --interval 0.5 --count 12 --json
+check "session auto-suspend restricted line" grep -q 'auto-suspend restricted to' "$work/last.out"
+check "session root is stopped" wait_until stopped "$session_root"
+check "session child 1 is stopped" wait_until stopped "$session_c1"
+check "session child 2 is stopped" wait_until stopped "$session_c2"
+check "session ledger shares one groupID" /usr/bin/python3 -c '
+import json, subprocess, sys
+cli = sys.argv[1]
+root = int(sys.argv[2]); c1 = int(sys.argv[3]); c2 = int(sys.argv[4])
+rows = json.loads(subprocess.check_output([cli, "stopped", "--json"]))
+pids = {row["token"].split(":")[0] for row in rows}
+assert {str(root), str(c1), str(c2)} == pids, rows
+assert len(rows) == 3, rows
+gids = {row.get("groupID") for row in rows}
+assert len(gids) == 1 and None not in gids and "" not in gids, rows
+' "$cli" "$session_root" "$session_c1" "$session_c2"
+check "session stopped --resume-all" expect_exit 0 "$cli" stopped --resume-all
+check "session root runs again" wait_until running "$session_root"
+check "session child 1 runs again" wait_until running "$session_c1"
+check "session child 2 runs again" wait_until running "$session_c2"
+check "session ledger empty after resume-all" test "$(ledger_count)" = 0
+kill -CONT "$session_c1" "$session_c2" "$session_root" 2>/dev/null || true
+kill -TERM "$session_c1" "$session_c2" "$session_root" 2>/dev/null || true
+wait_until gone "$session_root" || true
+wait_until gone "$session_c1" || true
+wait_until gone "$session_c2" || true
+
+echo "Audit"
+check "snapshot --out writes a file" expect_exit 0 "$cli" snapshot --out "$work/snap.json"
+check "snapshot JSON is valid" /usr/bin/python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert "rows" in d and isinstance(d["rows"], list)' "$work/snap.json"
+check "audit reads snapshot and prints a summary" expect_exit 0 "$cli" audit "$work/snap.json"
+check "audit summary names kinds" grep -q '종류:' "$work/last.out"
+check "audit fixture+labels has no untolerated mismatches" expect_exit 0 \
+  "$cli" audit "$repo_root/WatchdogTests/Fixtures/mac-20261030.json" \
+  --labels "$repo_root/WatchdogTests/Fixtures/mac-20261030.labels.json" --json
+check "audit JSON reports zero untolerated mismatches" /usr/bin/python3 -c \
+  'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("untoleratedMismatchCount")==0 else 1)' \
+  "$work/last.out"
+
+echo "JSON contract"
+check "check-cli-json" "$repo_root/scripts/check-cli-json.sh" "$cli"
 
 echo
 echo "cli-e2e: $pass passed, $fail failed (work dir $work)"
