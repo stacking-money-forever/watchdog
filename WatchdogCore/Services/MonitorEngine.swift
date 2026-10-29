@@ -76,6 +76,33 @@ struct MonitorUpdate: Sendable {
     let newlyHighMemory: Set<ProcessIdentity>
     /// Processes that auto-suspend may stop now (only when enabled).
     let autoSuspendCandidates: [ProcessSnapshot]
+    /// Agent/service session totals. Empty when the caller did not ingest
+    /// through `MonitorEngine` (preview helpers keep the process-only path).
+    let sessions: [AgentSession]
+    let hotSessions: Set<ProcessIdentity>
+    let highMemorySessions: Set<ProcessIdentity>
+
+    init(
+        processes: [ProcessSnapshot],
+        hot: Set<ProcessIdentity>,
+        highMemory: Set<ProcessIdentity>,
+        newlyHot: Set<ProcessIdentity>,
+        newlyHighMemory: Set<ProcessIdentity>,
+        autoSuspendCandidates: [ProcessSnapshot],
+        sessions: [AgentSession] = [],
+        hotSessions: Set<ProcessIdentity> = [],
+        highMemorySessions: Set<ProcessIdentity> = []
+    ) {
+        self.processes = processes
+        self.hot = hot
+        self.highMemory = highMemory
+        self.newlyHot = newlyHot
+        self.newlyHighMemory = newlyHighMemory
+        self.autoSuspendCandidates = autoSuspendCandidates
+        self.sessions = sessions
+        self.hotSessions = hotSessions
+        self.highMemorySessions = highMemorySessions
+    }
 }
 
 /// The UI-free detection state machine: orphan classification, sustained
@@ -92,6 +119,8 @@ struct MonitorEngine: Sendable {
 
     private var hotTracker: HotProcessTracker
     private var memoryTracker: MemoryProcessTracker
+    private var sessionHotTracker: HotProcessTracker
+    private var sessionMemoryTracker: MemoryProcessTracker
 
     /// `continuityGap` is the longest gap between samples that still counts
     /// as continuous evidence. It must exceed the sampling interval, or a
@@ -100,12 +129,18 @@ struct MonitorEngine: Sendable {
     init(continuityGap: Duration = .seconds(5)) {
         hotTracker = HotProcessTracker(continuityGap: continuityGap)
         memoryTracker = MemoryProcessTracker(continuityGap: continuityGap)
+        sessionHotTracker = HotProcessTracker(continuityGap: continuityGap)
+        sessionMemoryTracker = MemoryProcessTracker(continuityGap: continuityGap)
     }
     /// Evidence (unmasked) from the previous sample. Ignoring masks the output
     /// without discarding evidence, so undo restores a flag that survives the
     /// next sample.
     private var rawHot: Set<ProcessIdentity> = []
     private var rawHighMemory: Set<ProcessIdentity> = []
+    private var rawHotSessions: Set<ProcessIdentity> = []
+    private var rawHighMemorySessions: Set<ProcessIdentity> = []
+    private(set) var hotSessions: Set<ProcessIdentity> = []
+    private(set) var highMemorySessions: Set<ProcessIdentity> = []
     private var enrichment: [ProcessIdentity: Enrichment] = [:]
 
     private struct Enrichment: Sendable {
@@ -177,10 +212,40 @@ struct MonitorEngine: Sendable {
             at: instant
         )
 
+        let sessions = SessionAggregator.sessions(from: snapshots)
+        let byIdentity = Dictionary(
+            snapshots.map { ($0.identity, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let sessionSnapshots: [ProcessSnapshot] = sessions.compactMap { session in
+            guard var root = byIdentity[session.id] else { return nil }
+            root.cpuPercent = session.cpuPercent
+            root.residentBytes = session.residentBytes
+            return root
+        }
+        rawHotSessions = sessionHotTracker.update(
+            snapshots: sessionSnapshots,
+            threshold: settings.cpuThreshold,
+            releaseFraction: MonitorSettings.cpuReleaseFraction,
+            sustainedFor: settings.sustainedDuration,
+            ignoredProcesses: [],
+            at: instant
+        )
+        rawHighMemorySessions = sessionMemoryTracker.update(
+            snapshots: sessionSnapshots,
+            thresholdBytes: settings.memoryThresholdBytes,
+            releaseFraction: MonitorSettings.memoryReleaseFraction,
+            sustainedFor: settings.sustainedDuration,
+            ignoredProcesses: [],
+            at: instant
+        )
+
         let previousHot = hot
         let previousHighMemory = highMemory
         hot = rawHot.subtracting(ignored)
         highMemory = rawHighMemory.subtracting(ignored)
+        hotSessions = rawHotSessions.subtracting(ignored)
+        highMemorySessions = rawHighMemorySessions.subtracting(ignored)
         let newlyHot = hot.subtracting(previousHot)
         let newlyHighMemory = highMemory.subtracting(previousHighMemory)
 
@@ -200,7 +265,10 @@ struct MonitorEngine: Sendable {
             highMemory: highMemory,
             newlyHot: newlyHot,
             newlyHighMemory: newlyHighMemory,
-            autoSuspendCandidates: candidates
+            autoSuspendCandidates: candidates,
+            sessions: sessions,
+            hotSessions: hotSessions,
+            highMemorySessions: highMemorySessions
         )
     }
 
@@ -208,10 +276,16 @@ struct MonitorEngine: Sendable {
     mutating func samplingFailed() {
         hotTracker.reset()
         memoryTracker.reset()
+        sessionHotTracker.reset()
+        sessionMemoryTracker.reset()
         rawHot.removeAll()
         rawHighMemory.removeAll()
+        rawHotSessions.removeAll()
+        rawHighMemorySessions.removeAll()
         hot.removeAll()
         highMemory.removeAll()
+        hotSessions.removeAll()
+        highMemorySessions.removeAll()
     }
 
     /// Auto-suspend only stops a coding agent whose CPU stayed high. Memory
@@ -251,6 +325,8 @@ struct MonitorEngine: Sendable {
         ignored.insert(identity)
         hot.remove(identity)
         highMemory.remove(identity)
+        hotSessions.remove(identity)
+        highMemorySessions.remove(identity)
         return .ignored
     }
 
@@ -260,6 +336,8 @@ struct MonitorEngine: Sendable {
         guard ignored.remove(identity) != nil else { return false }
         if rawHot.contains(identity) { hot.insert(identity) }
         if rawHighMemory.contains(identity) { highMemory.insert(identity) }
+        if rawHotSessions.contains(identity) { hotSessions.insert(identity) }
+        if rawHighMemorySessions.contains(identity) { highMemorySessions.insert(identity) }
         return true
     }
 

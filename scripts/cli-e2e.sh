@@ -182,6 +182,19 @@ child_json=$("$cli" inspect "$child" --json)
 check "its child is attributed to it" /usr/bin/python3 -c \
   'import json,sys; sys.exit(json.loads(sys.argv[1]).get("agentAncestorPID")!=int(sys.argv[2]))' \
   "$child_json" "$interpreted"
+
+echo "Sessions"
+list_json=$("$cli" list --scope all --search gemini.py --json --interval 0.2)
+sessions_json=$("$cli" sessions --json --interval 0.2)
+check "sessions json lists the interpreter agent with members and summed memory" /usr/bin/python3 -c \
+  'import json,sys
+root=int(sys.argv[2]); child=int(sys.argv[3])
+listed=[p for p in json.loads(sys.argv[1]) if p["pid"]==root]
+sessions=[s for s in json.loads(sys.argv[4]) if s.get("rootPID")==root]
+sys.exit(not (listed and sessions and sessions[0]["memberCount"]>=1 and child in sessions[0]["members"] and sessions[0]["residentBytes"]>=listed[0]["residentBytes"]))' \
+  "$list_json" "$interpreted" "$child" "$sessions_json"
+check "sessions table has NAME header" expect_exit 0 "$cli" sessions --interval 0.2
+check "sessions table names NAME" grep -q NAME "$work/last.out"
 kill -TERM "$child" "$interpreted" 2>/dev/null || true
 
 echo "Services and leftovers"

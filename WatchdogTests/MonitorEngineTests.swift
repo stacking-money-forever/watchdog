@@ -164,6 +164,28 @@ final class MonitorEngineTests: XCTestCase {
         XCTAssertEqual(second.processes.first?.kind, .other)
     }
 
+    func testSessionSumCrossesThresholdWhileNoProcessIsHot() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let root = agent(pid: 9_080, cpu: 10)
+        let childA = snapshot(pid: 9_081, path: "/usr/bin/make", cpu: 50, parent: 9_080)
+        let childB = snapshot(pid: 9_082, path: "/usr/bin/make", cpu: 50, parent: 9_080)
+        let tree = [root, childA, childB]
+
+        _ = engine.ingest(tree, settings: settings, at: start)
+        let update = engine.ingest(tree, settings: settings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertEqual(update.hotSessions, [root.identity])
+        XCTAssertTrue(update.hot.isEmpty)
+        XCTAssertEqual(update.sessions.first { $0.id == root.identity }?.cpuPercent, 110)
+
+        engine.samplingFailed()
+        XCTAssertTrue(engine.hotSessions.isEmpty)
+        let afterFailure = engine.ingest(tree, settings: settings, at: start.advanced(by: .seconds(6)))
+        XCTAssertTrue(afterFailure.hotSessions.isEmpty)
+        XCTAssertTrue(afterFailure.hot.isEmpty)
+    }
+
     func testSamplingFailureResetsEvidencePerSafetyContract() {
         var engine = MonitorEngine()
         let start = ContinuousClock().now

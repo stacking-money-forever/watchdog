@@ -38,7 +38,10 @@ enum OrphanClassifier {
 
         init(byPID: [Int32: ProcessSnapshot]) {
             self.byPID = byPID
-            for (pid, snapshot) in byPID where snapshot.kind == .agent || snapshot.kind == .service {
+            // A terminal multiplexer or agent host (herdr, tmux, brgr) is a
+            // service too, but the shells it spawns are not its session.
+            for (pid, snapshot) in byPID
+            where (snapshot.kind == .agent || snapshot.kind == .service) && !isSessionHost(snapshot) {
                 roots[pid] = snapshot.agentName
                     ?? URL(fileURLWithPath: snapshot.executablePath).lastPathComponent
             }
@@ -106,7 +109,7 @@ enum OrphanClassifier {
         return snapshot.tty == "??" ? .detachedSession : nil
     }
 
-    private static func isSessionHost(_ snapshot: ProcessSnapshot) -> Bool {
+    static func isSessionHost(_ snapshot: ProcessSnapshot) -> Bool {
         let value = snapshot.executablePath.lowercased()
         return [
             "orca helper",

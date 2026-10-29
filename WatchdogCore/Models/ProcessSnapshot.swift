@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-enum ProcessKind: String, Sendable {
+enum ProcessKind: String, Equatable, Sendable {
     case agent
     case service
     case browserRenderer
