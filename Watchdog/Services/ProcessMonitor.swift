@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import OSLog
 import UserNotifications
 
 enum ProcessScope: String, CaseIterable, Identifiable {
@@ -111,6 +112,7 @@ final class ProcessMonitor: ObservableObject {
     private let defaults: UserDefaults
     private let sampler: any ProcessSampling
     private let ledger: SuspensionLedger
+    private let journal: ActionJournal
     private let workingDirectoryResolver: WorkingDirectoryResolver
     private let worktreeResolver: WorktreeStateResolver
     private let authorization: ProcessActionAuthorizationActor
@@ -128,11 +130,15 @@ final class ProcessMonitor: ObservableObject {
     private var actionOutcomeRecordedAt: [ProcessIdentity: ContinuousClock.Instant] = [:]
     private var pendingConfirmations: [UUID: ContinuousClock.Instant] = [:]
     private var terminationPollTasks: [ProcessIdentity: (id: UUID, task: Task<Void, Never>)] = [:]
+    private var pendingJournalIDs: [ProcessIdentity: UUID] = [:]
+
+    private static let log = Logger(subsystem: "dev.justn.watchdog", category: "journal")
 
     init(
         defaults: UserDefaults = .standard,
         sampler: any ProcessSampling = ProcessSampler(),
         ledger: SuspensionLedger = .inMemory(),
+        journal: ActionJournal = .inMemory(),
         authorization: ProcessActionAuthorizationActor = ProcessActionAuthorizationActor(),
         controller: ProcessController = ProcessController(),
         workingDirectoryResolver: WorkingDirectoryResolver = WorkingDirectoryResolver(),
@@ -144,6 +150,7 @@ final class ProcessMonitor: ObservableObject {
         self.defaults = defaults
         self.sampler = sampler
         self.ledger = ledger
+        self.journal = journal
         self.authorization = authorization
         self.controller = controller
         self.workingDirectoryResolver = workingDirectoryResolver
@@ -497,7 +504,13 @@ final class ProcessMonitor: ObservableObject {
         guard autoSuspendEnabled, let update else { return }
         for snapshot in update.autoSuspendCandidates {
             do {
-                try await performAction(.suspend, process: snapshot, source: .auto)
+                try await performAction(
+                    .suspend,
+                    process: snapshot,
+                    source: .auto,
+                    journalSource: .auto,
+                    reason: autoSuspendReason(for: snapshot)
+                )
                 showFeedback(
                     .init(kind: .success, message: "자동 일시 정지: \(snapshot.displayName) (CPU 임계값 지속 초과)")
                 )
@@ -529,7 +542,12 @@ final class ProcessMonitor: ObservableObject {
                 continue
             }
             do {
-                try await performAction(.resume, process: process, source: record.source)
+                try await performAction(
+                    .resume,
+                    process: process,
+                    source: record.source,
+                    journalSource: .app
+                )
                 resumed += 1
             } catch {
                 failed += 1
@@ -724,6 +742,7 @@ final class ProcessMonitor: ObservableObject {
     }
 
     var ledgerPreview: SuspensionLedger { ledger }
+    var journalPreview: ActionJournal { journal }
 
     func pruneActionOutcomesPreview(at instant: ContinuousClock.Instant) {
         pruneActionOutcomes(at: instant)
@@ -788,7 +807,9 @@ final class ProcessMonitor: ObservableObject {
     private func performAction(
         _ action: ProcessControlAction,
         process: ProcessSnapshot,
-        source: SuspensionRecord.Source
+        source: SuspensionRecord.Source,
+        journalSource: ActionJournalEntry.Source,
+        reason: String? = nil
     ) async throws {
         guard !action.isDestructive else { throw ProcessControlError.authorizationInvalid }
         let observation = try requireActionable(process, for: action)
@@ -803,7 +824,9 @@ final class ProcessMonitor: ObservableObject {
             action: action,
             process: process,
             mintedGeneration: observation.generation,
-            source: source
+            source: source,
+            journalSource: journalSource,
+            reason: reason
         )
     }
 
@@ -812,7 +835,9 @@ final class ProcessMonitor: ObservableObject {
         action: ProcessControlAction,
         process: ProcessSnapshot,
         mintedGeneration: UInt64,
-        source: SuspensionRecord.Source = .manual
+        source: SuspensionRecord.Source = .manual,
+        journalSource: ActionJournalEntry.Source = .app,
+        reason: String? = nil
     ) async throws {
         let observation = try requireActionable(process, for: action)
         // A sample landed between minting and consuming. Say so instead of
@@ -859,27 +884,72 @@ final class ProcessMonitor: ObservableObject {
             // running again and no longer Watchdog-suspended.
             _ = try? ledger.remove(process.identity)
             reconcileLedger()
+            recordJournal(
+                id: UUID(),
+                action: action,
+                process: process,
+                source: journalSource,
+                reason: reason,
+                outcome: .failed(ProcessControlError.partiallyApplied(delivered: delivered, failure: failure).localizedDescription)
+            )
             throw ProcessControlError.partiallyApplied(delivered: delivered, failure: failure)
         } catch {
             if action == .suspend {
                 _ = try? ledger.remove(process.identity)
                 watchdogSuspended = ledger.all()
             }
+            if let controlError = error as? ProcessControlError, controlError.didSendSignal {
+                recordJournal(
+                    id: UUID(),
+                    action: action,
+                    process: process,
+                    source: journalSource,
+                    reason: reason,
+                    outcome: .failed(error.localizedDescription)
+                )
+            }
             throw error
         }
 
         reflectLiveState(of: process.identity)
 
+        let journalID = UUID()
         switch action {
         case .suspend:
             recordActionOutcome(.suspended, for: process.identity)
+            recordJournal(
+                id: journalID,
+                action: action,
+                process: process,
+                source: journalSource,
+                reason: reason,
+                outcome: .suspended
+            )
         case .resume:
             _ = try? ledger.remove(process.identity)
             engine.recordUserResume(process.identity)
             recordActionOutcome(.resumed, for: process.identity)
+            recordJournal(
+                id: journalID,
+                action: action,
+                process: process,
+                source: journalSource,
+                reason: reason,
+                outcome: .resumed,
+                undoOf: lastSuspendJournalID(for: process.identity)
+            )
         case .terminate, .forceQuit:
             _ = try? ledger.remove(process.identity)
             recordActionOutcome(.awaitingExit, for: process.identity)
+            recordJournal(
+                id: journalID,
+                action: action,
+                process: process,
+                source: journalSource,
+                reason: reason,
+                outcome: .awaitingExit
+            )
+            pendingJournalIDs[process.identity] = journalID
             pollTerminationOutcome(for: process.identity)
         }
         watchdogSuspended = ledger.all()
@@ -908,14 +978,14 @@ final class ProcessMonitor: ObservableObject {
         Task {
             do {
                 do {
-                    try await performAction(action, process: process, source: .manual)
+                    try await performAction(action, process: process, source: .manual, journalSource: .app)
                 } catch ProcessControlError.observationRefreshed {
                     // Non-destructive and reversible: one retry against the
                     // fresh observation (a new single-use authorization).
                     guard let fresh = processes.first(where: { $0.identity == process.identity }) else {
                         throw ProcessControlError.processChanged
                     }
-                    try await performAction(action, process: fresh, source: .manual)
+                    try await performAction(action, process: fresh, source: .manual, journalSource: .app)
                 }
                 showFeedback(.init(kind: .success, message: message))
             } catch {
@@ -966,10 +1036,13 @@ final class ProcessMonitor: ObservableObject {
                 // only report the failure if the budget runs out on it.
                 if let outcome, outcome != .verificationFailed {
                     self.recordActionOutcome(outcome, for: identity)
+                    self.finishJournalTermination(identity: identity, outcome: outcome)
                     return
                 }
                 if attempt == 19 {
-                    self.recordActionOutcome(outcome ?? .stillRunning, for: identity)
+                    let settled = outcome ?? .stillRunning
+                    self.recordActionOutcome(settled, for: identity)
+                    self.finishJournalTermination(identity: identity, outcome: settled)
                 }
             }
         }
@@ -986,6 +1059,53 @@ final class ProcessMonitor: ObservableObject {
     private func finishTerminationPoll(identity: ProcessIdentity, id: UUID) {
         guard terminationPollTasks[identity]?.id == id else { return }
         terminationPollTasks[identity] = nil
+    }
+
+    private func autoSuspendReason(for process: ProcessSnapshot) -> String {
+        "CPU \(Int(process.cpuPercent.rounded()))% 지속 \(Int(sustainedDuration.rounded()))초"
+    }
+
+    private func lastSuspendJournalID(for identity: ProcessIdentity) -> UUID? {
+        journal.all().last {
+            $0.pid == identity.pid
+                && $0.startTimeMicroseconds == identity.startTimeMicroseconds
+                && $0.userID == identity.userID
+                && $0.action == .suspend
+        }?.id
+    }
+
+    private func finishJournalTermination(identity: ProcessIdentity, outcome: ProcessActionOutcome) {
+        guard let id = pendingJournalIDs.removeValue(forKey: identity) else { return }
+        do {
+            try journal.update(id: id, outcome: ActionJournalEntry.outcomeString(outcome))
+        } catch {
+            Self.log.error("ActionJournal update failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private func recordJournal(
+        id: UUID,
+        action: ProcessControlAction,
+        process: ProcessSnapshot,
+        source: ActionJournalEntry.Source,
+        reason: String?,
+        outcome: ProcessActionOutcome,
+        undoOf: UUID? = nil
+    ) {
+        let entry = ActionJournalEntry(
+            id: id,
+            source: source,
+            action: action,
+            process: process,
+            reason: reason,
+            outcome: outcome,
+            undoOf: undoOf
+        )
+        do {
+            try journal.append(entry)
+        } catch {
+            Self.log.error("ActionJournal append failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     private func recordActionOutcome(

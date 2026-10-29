@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import OSLog
 
 /// `pid:startMicroseconds:uid` — the exact process a CLI action targets.
 /// A PID alone is reusable; the start time makes the token single-process.
@@ -239,19 +240,24 @@ struct CLIControl: Sendable {
     let lister: Lister
     let controller: ProcessController
     let ledger: SuspensionLedger
+    let journal: ActionJournal
     let sleep: Sleeper
     let terminationPollAttempts: Int
+
+    private static let log = Logger(subsystem: "dev.justn.watchdog", category: "journal")
 
     init(
         lister: @escaping Lister = { try LibprocProcessLister.list() },
         controller: ProcessController = ProcessController(),
         ledger: SuspensionLedger = .standard(),
+        journal: ActionJournal = .standard(),
         sleep: @escaping Sleeper = { try? await Task.sleep(for: $0) },
         terminationPollAttempts: Int = 20
     ) {
         self.lister = lister
         self.controller = controller
         self.ledger = ledger
+        self.journal = journal
         self.sleep = sleep
         self.terminationPollAttempts = terminationPollAttempts
     }
@@ -318,6 +324,9 @@ struct CLIControl: Sendable {
             if case let .partiallyApplied(delivered, _) = error, delivered.contains(SIGCONT) {
                 _ = try? ledger.remove(live.identity)
             }
+            if error.didSendSignal {
+                recordJournal(action: action, live: live, outcome: .failed(error.localizedDescription))
+            }
             return .failed(error, refused: Self.isRefusal(error))
         }
 
@@ -332,6 +341,7 @@ struct CLIControl: Sendable {
             _ = try? ledger.remove(live.identity)
             outcome = await awaitTermination(live.identity)
         }
+        recordJournal(action: action, live: live, outcome: outcome)
         return .performed(
             CLIActionReport(
                 action: action,
@@ -372,6 +382,35 @@ struct CLIControl: Sendable {
             return isRefusal(failure)
         default:
             return false
+        }
+    }
+
+    private func recordJournal(
+        action: CLIAction,
+        live: ProcessSnapshot,
+        outcome: ProcessActionOutcome
+    ) {
+        let undoOf: UUID?
+        if action == .resume {
+            undoOf = journal.all().last {
+                $0.pid == live.id
+                    && $0.startTimeMicroseconds == live.startTimeMicroseconds
+                    && $0.action == .suspend
+            }?.id
+        } else {
+            undoOf = nil
+        }
+        let entry = ActionJournalEntry(
+            source: .cli,
+            action: action.controlAction,
+            process: live,
+            outcome: outcome,
+            undoOf: undoOf
+        )
+        do {
+            try journal.append(entry)
+        } catch {
+            Self.log.error("ActionJournal append failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

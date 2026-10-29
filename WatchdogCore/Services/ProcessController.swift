@@ -46,6 +46,16 @@ enum ProcessControlError: LocalizedError, Sendable {
         }
     }
 
+    /// Kill was invoked (and either failed or a later signal in the plan failed).
+    var didSendSignal: Bool {
+        switch self {
+        case .signalFailed, .partiallyApplied:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func signalName(_ signal: Int32) -> String {
         switch signal {
         case SIGSTOP: return "SIGSTOP"

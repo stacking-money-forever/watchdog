@@ -344,7 +344,7 @@ struct WatchdogApp: App {    @NSApplicationDelegateAdaptor(WatchdogAppDelegate.s
         let loginDefaults: UserDefaults
         switch mode {
         case .normal:
-            monitor = ProcessMonitor(ledger: .standard())
+            monitor = ProcessMonitor(ledger: .standard(), journal: .standard())
             // Launch smoke runs this path from a build directory.
             loginDefaults = ProcessInfo.processInfo.environment["WATCHDOG_DISABLE_LOGIN_ITEM"] == "1"
                 ? UserDefaults(suiteName: "dev.justn.watchdog.isolated") ?? .standard
