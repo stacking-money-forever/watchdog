@@ -202,6 +202,7 @@ enum LibprocProcessLister {
             startTimeMicroseconds: startMicroseconds
         )
         snapshot.launchScript = command?.script
+        snapshot.launchSubcommand = command?.subcommand
         return RawProcessRow(
             snapshot: snapshot,
             totalCPUTimeNanoseconds: hasTaskInfo
@@ -288,6 +289,7 @@ private final class TTYNameCache: @unchecked Sendable {
 struct LaunchCommand: Sendable, Equatable {
     let name: String
     let script: String?
+    let subcommand: String?
 }
 
 /// Reads argv through `KERN_PROCARGS2`, reusing one buffer across a whole
@@ -331,7 +333,7 @@ struct ArgumentReader {
         while index < bytes.count, bytes[index] == 0 { index += 1 }
 
         var arguments: [String] = []
-        while index < bytes.count, arguments.count < min(argc, maximumScriptSearch + 1) {
+        while index < bytes.count, arguments.count < min(argc, maximumScriptSearch + 2) {
             let end = bytes[index...].firstIndex(of: 0) ?? bytes.endIndex
             arguments.append(String(decoding: bytes[index..<end], as: UTF8.self))
             index = end + 1
@@ -340,7 +342,8 @@ struct ArgumentReader {
         let script = AgentCatalog.isInterpreter(name)
             ? AgentCatalog.launchScript(arguments: Array(arguments.dropFirst()))
             : nil
-        return LaunchCommand(name: name, script: script)
+        let subcommand = AgentCatalog.launchSubcommand(arguments: arguments)
+        return LaunchCommand(name: name, script: script, subcommand: subcommand)
     }
 
     /// argv[0]… for a live dump. Classification still uses `command(pid:)`.

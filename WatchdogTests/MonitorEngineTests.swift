@@ -145,6 +145,47 @@ final class MonitorEngineTests: XCTestCase {
         XCTAssertEqual(ordered.map(\.id), [9_050, 9_051])
     }
 
+    func testCarriedTemporaryWorkingDirectoryMarksOrphanOnNextSample() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let process = snapshot(
+            pid: 9_070,
+            path: "/Users/test/Library/Application Support/brgr/bin/brgr",
+            parent: 1,
+            tty: "??"
+        )
+
+        let first = engine.ingest([process], settings: settings, at: start)
+        XCTAssertNil(first.processes.first?.orphanReason)
+
+        engine.recordWorkingDirectory("/private/var/folders/x/T/.tmpX", for: process.identity)
+        let second = engine.ingest([process], settings: settings, at: start.advanced(by: .seconds(2)))
+        XCTAssertEqual(second.processes.first?.orphanReason, .temporaryLaunchPath)
+        XCTAssertEqual(second.processes.first?.kind, .other)
+    }
+
+    func testSessionSumCrossesThresholdWhileNoProcessIsHot() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let root = agent(pid: 9_080, cpu: 10)
+        let childA = snapshot(pid: 9_081, path: "/usr/bin/make", cpu: 50, parent: 9_080)
+        let childB = snapshot(pid: 9_082, path: "/usr/bin/make", cpu: 50, parent: 9_080)
+        let tree = [root, childA, childB]
+
+        _ = engine.ingest(tree, settings: settings, at: start)
+        let update = engine.ingest(tree, settings: settings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertEqual(update.hotSessions, [root.identity])
+        XCTAssertTrue(update.hot.isEmpty)
+        XCTAssertEqual(update.sessions.first { $0.id == root.identity }?.cpuPercent, 110)
+
+        engine.samplingFailed()
+        XCTAssertTrue(engine.hotSessions.isEmpty)
+        let afterFailure = engine.ingest(tree, settings: settings, at: start.advanced(by: .seconds(6)))
+        XCTAssertTrue(afterFailure.hotSessions.isEmpty)
+        XCTAssertTrue(afterFailure.hot.isEmpty)
+    }
+
     func testSamplingFailureResetsEvidencePerSafetyContract() {
         var engine = MonitorEngine()
         let start = ContinuousClock().now
@@ -168,14 +209,16 @@ final class MonitorEngineTests: XCTestCase {
         path: String,
         cpu: Double = 0,
         memoryGB: UInt64 = 0,
-        state: String = "R"
+        state: String = "R",
+        parent: Int32 = 600,
+        tty: String = "ttys001"
     ) -> ProcessSnapshot {
         ProcessSnapshot(
             id: pid,
-            parentPID: 600,
+            parentPID: parent,
             processGroupID: pid,
             userID: getuid(),
-            tty: "ttys001",
+            tty: tty,
             cpuPercent: cpu,
             residentBytes: memoryGB * 1_024 * 1_024 * 1_024,
             state: state,

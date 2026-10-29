@@ -82,6 +82,7 @@ struct ProcessFixture: Codable, Equatable, Sendable {
             if let name = row.args.first, AgentCatalog.isInterpreter(name) {
                 snapshot.launchScript = AgentCatalog.launchScript(arguments: Array(row.args.dropFirst()))
             }
+            snapshot.launchSubcommand = AgentCatalog.launchSubcommand(arguments: row.args)
             return snapshot
         }
     }

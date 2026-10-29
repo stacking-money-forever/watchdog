@@ -20,11 +20,8 @@ final class ClassifierAccuracyTests: XCTestCase {
         \(preview)
         """
 
-        let options = XCTExpectedFailure.Options()
-        options.isStrict = true
-        XCTExpectFailure("A2 before service/orphan rules", options: options) {
-            XCTAssertEqual(report.untoleratedMismatchCount, 0, message)
-        }
+        XCTAssertEqual(report.untoleratedMismatchCount, 0, message)
+        XCTAssertLessThanOrEqual(report.toleratedMismatchCount, 10, message)
     }
 
     func testAuditReportIsStable() throws {

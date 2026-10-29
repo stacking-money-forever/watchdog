@@ -175,6 +175,9 @@ struct ProcessRow: View {
         if let ancestor = process.agentAncestor {
             identity = "\(ancestor.name)에서 실행 · " + identity
         }
+        if process.kind == .service {
+            identity = "서비스 · " + identity
+        }
         let elapsedParts = process.elapsed.split(separator: ":")
         let compactElapsed = elapsedParts.count >= 3
             ? elapsedParts.dropLast().joined(separator: ":")
@@ -185,6 +188,7 @@ struct ProcessRow: View {
     private var iconName: String {
         switch process.kind {
         case .agent: "terminal"
+        case .service: "server.rack"
         case .browserRenderer: "globe"
         case .application: "macwindow"
         case .system: "gearshape.2"
@@ -198,6 +202,7 @@ struct ProcessRow: View {
         if hasHighMemoryAlert { return .purple }
         switch process.kind {
         case .agent: return .indigo
+        case .service: return .teal
         case .browserRenderer: return .blue
         case .application: return .mint
         case .system: return .secondary
@@ -263,7 +268,10 @@ struct ProcessRow: View {
     }
 
     private var accessibilityLabel: String {
-        "\(process.displayName), PID \(process.id)"
+        if process.kind == .service {
+            return "서비스, \(process.displayName), PID \(process.id)"
+        }
+        return "\(process.displayName), PID \(process.id)"
     }
 
     private var accessibilityValue: String {

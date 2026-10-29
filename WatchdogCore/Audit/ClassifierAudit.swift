@@ -232,7 +232,8 @@ enum ClassifierAudit {
             if let expectedRoot = label.sessionRoot {
                 let computed: Int32?
                 if let snapshot {
-                    computed = snapshot.kind == .agent ? snapshot.id : snapshot.agentAncestor?.pid
+                    computed = snapshot.agentAncestor?.pid
+                        ?? ((snapshot.kind == .agent || snapshot.kind == .service) ? snapshot.id : nil)
                 } else {
                     computed = nil
                 }
@@ -273,7 +274,7 @@ enum ClassifierAudit {
             }
         }
 
-        let toleratedCount = mismatches.filter(\.tolerated).count
+        let toleratedCount = Set(mismatches.filter(\.tolerated).map(\.pid)).count
         let untoleratedCount = mismatches.filter { !$0.tolerated }.count
         return AuditReport(
             snapshotCount: snapshots.count,

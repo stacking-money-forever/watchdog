@@ -10,6 +10,8 @@ let usageText = """
 조회 (안전):
   list [--scope attention|agents|all] [--search 텍스트] [--interval 초] [--json]
       CPU%를 계산하려고 두 번 샘플링합니다(기본 1초 간격). TOKEN은 제어 명령에 씁니다.
+  sessions [--interval 초] [--json]
+      에이전트·서비스 세션(루트와 가장 가까운 자손)의 CPU·메모리 합계를 보여 줍니다. 지속 판정은 watch.
   inspect <TOKEN|PID> [--json]
       한 프로세스의 신원, 상태, 작업 디렉터리, 워크트리 상태를 보여 줍니다.
   watch [--interval 초] [--count N] [--duration 초] [--cpu %] [--sustain 초] [--memory GB]
@@ -166,6 +168,44 @@ struct ProcessRecord: Encodable {
     }
 }
 
+struct SessionRecord: Encodable {
+    let id: String
+    let rootPID: Int32
+    let name: String
+    let kind: String
+    let workingDirectory: String?
+    let projectName: String?
+    let members: [Int32]
+    let memberCount: Int
+    let cpuPercent: Double
+    let residentBytes: UInt64
+    let isSuspended: Bool
+    let elapsed: String
+
+    init(_ session: AgentSession) {
+        id = IdentityToken(session.id).description
+        rootPID = session.rootPID
+        name = session.name
+        kind = session.kind.rawValue
+        workingDirectory = session.workingDirectory
+        projectName = session.projectName
+        members = session.members.map(\.pid)
+        memberCount = session.memberCount
+        cpuPercent = session.cpuPercent
+        residentBytes = session.residentBytes
+        isSuspended = session.isSuspended
+        elapsed = session.elapsed
+    }
+}
+
+struct SessionAlertEvent: Encodable {
+    let event: String
+    let token: String
+    let name: String
+    let cpuPercent: Double
+    let memberCount: Int
+}
+
 func appSettings() -> MonitorSettings {
     MonitorSettings(defaults: UserDefaults(suiteName: MonitorSettings.defaultsSuiteName) ?? .standard)
 }
@@ -176,7 +216,14 @@ func sampleWithCPU(interval: Double) async throws -> [ProcessSnapshot] {
     _ = try await sampler.sample()
     try await Task.sleep(for: .milliseconds(Int(interval * 1_000)))
     let sample = try await sampler.sample()
-    return OrphanClassifier.classify(sample.processes)
+    var processes = sample.processes
+    // Temporary-path orphans need cwd (and leftover `/bin/sh $TMPDIR/…`
+    // scripts need it on the first list). Only ppid ≤ 1 is cheap enough:
+    // those are the processes the rule inspects.
+    for index in processes.indices where processes[index].parentPID <= 1 && processes[index].workingDirectory == nil {
+        processes[index].workingDirectory = WorkingDirectoryResolver.currentDirectory(pid: processes[index].id)
+    }
+    return OrphanClassifier.classify(processes)
 }
 
 // MARK: - Commands
@@ -211,7 +258,7 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
                     || stopped.contains($0.identity))
         }
     case "agents":
-        processes = processes.filter { $0.kind == .agent }
+        processes = processes.filter { $0.kind == .agent || ($0.kind == .service && $0.agentName != nil) }
     default:
         break
     }
@@ -265,6 +312,58 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
     return CLIExitCode.success
 }
 
+func runSessions(_ arguments: Arguments) async throws -> Int32 {
+    let interval = try arguments.double("--interval", default: 1, range: 0.2...10)
+    var processes = try await sampleWithCPU(interval: interval)
+    var agentDirectories: [Int32: String?] = [:]
+    func agentDirectory(_ pid: Int32) -> String? {
+        if let cached = agentDirectories[pid] { return cached }
+        let directory = WorkingDirectoryResolver.currentDirectory(pid: pid)
+        agentDirectories[pid] = directory
+        return directory
+    }
+    for index in processes.indices where processes[index].kind == .agent || processes[index].kind == .service {
+        if processes[index].workingDirectory == nil {
+            processes[index].workingDirectory = agentDirectory(processes[index].id)
+        }
+    }
+    let byIdentity = Dictionary(processes.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
+    // Other users' daemons and memberless system services are not sessions
+    // anyone will act on; keep the list to this user's agents and services
+    // that run an agent or have started something.
+    let sessions = SessionAggregator.sessions(from: processes).filter { session in
+        guard session.id.userID == getuid() else { return false }
+        if session.kind == .agent { return true }
+        return session.memberCount > 0 || byIdentity[session.id]?.agentName != nil
+    }
+    if arguments.json {
+        emitJSON(sessions.map(SessionRecord.init))
+        return CLIExitCode.success
+    }
+    if sessions.isEmpty {
+        print("해당하는 세션이 없습니다.")
+        return CLIExitCode.success
+    }
+    print(pad("TOKEN", 30) + pad("CPU%", 8) + pad("MEM", 10) + pad("N", 4) + pad("KIND", 10) + pad("NAME", 24) + pad("PROJECT", 16) + "FLAGS")
+    for session in sessions {
+        var flags: [String] = []
+        if session.isSuspended { flags.append("suspended") }
+        if byIdentity[session.id]?.suspectedOrphan == true { flags.append("orphan") }
+        if session.kind == .service { flags.append("service") }
+        print(
+            pad(IdentityToken(session.id).description, 30)
+                + pad(String(format: "%.1f", session.cpuPercent), 8)
+                + pad(memoryText(session.residentBytes), 10)
+                + pad(String(session.memberCount), 4)
+                + pad(session.kind.rawValue, 10)
+                + pad(session.name, 24)
+                + pad(String((session.projectName ?? "").prefix(15)), 16)
+                + flags.joined(separator: ",")
+        )
+    }
+    return CLIExitCode.success
+}
+
 func runInspect(_ arguments: Arguments) async throws -> Int32 {
     guard let text = arguments.positionals.first, let target = CLITarget(parsing: text) else {
         throw CLIUsageError("inspect에는 TOKEN 또는 PID가 필요합니다.")
@@ -297,7 +396,7 @@ func runInspect(_ arguments: Arguments) async throws -> Int32 {
         ("이름", process.displayName),
         ("경로(argv0)", process.executablePath),
         ("실행 스크립트", process.launchScript ?? "-"),
-        ("종류", process.kind.rawValue),
+        ("종류", process.kind == .service ? "서비스" : process.kind.rawValue),
         ("PID / PPID / PGID", "\(process.id) / \(process.parentPID) / \(process.processGroupID)"),
         ("UID", "\(process.userID)"),
         ("상태", process.state + (process.isSuspended ? " (정지됨)" : "")),
@@ -516,6 +615,8 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     var ticks = 0
     var previousHot: Set<ProcessIdentity> = []
     var previousHighMemory: Set<ProcessIdentity> = []
+    var previousHotSessions: Set<ProcessIdentity> = []
+    var previousHighMemorySessions: Set<ProcessIdentity> = []
     var autoSuspended: Set<ProcessIdentity> = []
     var failures = 0
 
@@ -558,8 +659,41 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             for identity in previousHighMemory.subtracting(update.highMemory) {
                 emit("cleared.memory", byIdentity[identity], byIdentity[identity] == nil ? "PID \(identity.pid) 종료됨" : nil)
             }
+            let sessionsByID = Dictionary(update.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            func emitSession(_ event: String, _ session: AgentSession) {
+                if arguments.json {
+                    emitJSON(
+                        SessionAlertEvent(
+                            event: event,
+                            token: IdentityToken(session.id).description,
+                            name: session.name,
+                            cpuPercent: (session.cpuPercent * 10).rounded() / 10,
+                            memberCount: session.memberCount
+                        )
+                    )
+                } else {
+                    let formatter = DateFormatter()
+                    formatter.dateFormat = "HH:mm:ss"
+                    print(
+                        "[\(formatter.string(from: Date()))] \(event) \(session.name) (\(IdentityToken(session.id))) · CPU \(Int(session.cpuPercent.rounded()))% · 멤버 \(session.memberCount)"
+                    )
+                }
+                fflush(stdout)
+            }
+            for identity in update.hotSessions.subtracting(previousHotSessions) {
+                if let session = sessionsByID[identity] {
+                    emitSession("session-hot", session)
+                }
+            }
+            for identity in update.highMemorySessions.subtracting(previousHighMemorySessions) {
+                if let session = sessionsByID[identity] {
+                    emitSession("session-high-memory", session)
+                }
+            }
             previousHot = update.hot
             previousHighMemory = update.highMemory
+            previousHotSessions = update.hotSessions
+            previousHighMemorySessions = update.highMemorySessions
             for candidate in update.autoSuspendCandidates {
                 switch try await control.run(.suspend, target: .token(IdentityToken(candidate.identity)), force: true) {
                 case let .performed(report):
@@ -579,6 +713,8 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             engine.samplingFailed()
             previousHot = []
             previousHighMemory = []
+            previousHotSessions = []
+            previousHighMemorySessions = []
             emit("sample.failed", nil, error.localizedDescription)
         }
         let deadline = clock.now.advanced(by: .milliseconds(Int(interval * 1_000)))
@@ -791,6 +927,7 @@ func main() async -> Int32 {
         }
         switch command {
         case "list": return try await runList(arguments)
+        case "sessions": return try await runSessions(arguments)
         case "inspect": return try await runInspect(arguments)
         case "watch": return try await runWatch(arguments)
         case "stopped": return try await runStopped(arguments)
