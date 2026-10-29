@@ -45,7 +45,11 @@ cd watchdog
 - CPU·메모리 임계값을 지속해서 넘긴 프로세스를 이유와 함께 표시합니다. 임계값 근처에서 오르내리는 프로세스가 깜빡이지 않도록 해제 구간(CPU 80%, 메모리 90%)을 둡니다. 고아 의심 에이전트는 경고가 아닌 정보로 표시합니다.
 - 코딩 에이전트는 실행 파일 이름(claude, codex, opencode, omp, amp, copilot, cursor-agent 등)으로, npm·pip로 설치되어 `node`·`python`으로 실행되는 에이전트(gemini, pi, aider 등)는 스크립트 경로로 알아봅니다. 앱 번들 안의 바이너리(예: ChatGPT.app의 codex)는 그 앱의 일부로 봅니다. 에이전트가 띄운 빌드·테스트·MCP 서버는 어느 에이전트가 시작했는지와 그 프로젝트를 함께 표시합니다.
 - 지원하는 코딩 에이전트의 작업 디렉터리와 프로젝트명을 조회하고, 해당 경로가 정리 가능한 워크트리인지 알려줍니다. Git 조회는 `--no-optional-locks`로 실행해 에이전트의 커밋을 방해하지 않습니다.
-- 감지 규칙에서 자동 일시 정지를 켜면 CPU 임계값을 지속해서 넘긴 코딩 에이전트에만 되돌릴 수 있는 SIGSTOP을 보냅니다. 메모리만 넘긴 프로세스나 일반 앱은 멈추지 않고, 직접 재개한 프로세스는 다시 멈추지 않습니다. 재개는 항상 수동입니다.
+- 에이전트 하나와 그 자손(빌드·테스트·MCP 서버)을 **세션**으로 묶어 CPU·메모리 합계로 보여 주고, 합계가 임계값을 지속해서 넘기면 세션 단위로 경고합니다(`watchdog-cli sessions`).
+- launchd 아래 상주하도록 만든 서비스(`opencode serve`, `codex app-server`, 사용자 데몬)는 고아로 보지 않습니다. 반대로 임시 폴더(`$TMPDIR`, scratchpad)에서 시작돼 부모 없이 남은 프로세스는 종류와 상관없이 "임시 폴더에서 시작된 채 남아 있습니다"로 표시합니다. 분류 정확도는 이 Mac의 실제 프로세스 트리 1,151개를 라벨링한 픽스처로 재며, 테스트가 불일치 0건을 지킵니다(`watchdog-cli audit`).
+- 목록에 없는 에이전트는 `~/Library/Application Support/Watchdog/agent-rules.json`으로 추가할 수 있습니다(이름·패키지 경로·서비스 서브커맨드·세션 호스트, 제외 이름). 세션 호스트 아래에서 TTY를 갖고 패키지 경로의 스크립트를 실행하는 `node`·`python` 프로세스는 "에이전트일 수 있음"으로 표시만 하고 자동으로 멈추지 않습니다(`watchdog-cli rules`).
+- Watchdog이 보낸 모든 시그널은 `~/Library/Application Support/Watchdog/journal.jsonl`에 출처(앱·자동·CLI)·사유·결과와 함께 남습니다(`watchdog-cli journal`).
+- 감지 규칙에서 자동 일시 정지를 켜면 CPU 임계값을 지속해서 넘긴 코딩 에이전트에만 되돌릴 수 있는 SIGSTOP을 보냅니다. 메모리만 넘긴 프로세스나 일반 앱, 서비스는 멈추지 않고, 직접 재개한 프로세스는 다시 멈추지 않습니다. 재개는 항상 수동입니다. 범위를 세션으로 바꾸면(기본값은 에이전트만) 세션 합계가 지속 초과할 때 루트와 자손을 함께 멈추고 함께 재개합니다. 자손만 멈추는 동작은 없습니다.
 - Watchdog이 멈춘 프로세스는 기록으로 남아 "주의 필요"에 계속 보이고, Watchdog을 종료할 때 멈춘 프로세스가 있으면 재개 후 종료할지 묻습니다.
 - 경고를 해당 프로세스가 종료될 때까지 무시하고 즉시 되돌릴 수 있습니다.
 - 현재 사용자 소유 프로세스를 일시 정지, 재개, 종료 또는 강제 종료합니다.
@@ -58,16 +62,21 @@ cd watchdog
 ```bash
 watchdog-cli list --scope agents          # TOKEN(pid:시작시각:uid)과 함께 목록
 watchdog-cli inspect <TOKEN|PID>          # 작업 디렉터리·워크트리 상태까지 상세 정보
-watchdog-cli watch --auto-suspend --json  # 앱과 같은 감지 엔진으로 지속 감시
+watchdog-cli sessions                     # 에이전트 세션별 CPU·메모리 합계와 멤버 수
+watchdog-cli watch --auto-suspend --only <TOKEN> --json  # 지속 감시; --only로 자동 정지 대상을 제한
 watchdog-cli suspend <TOKEN|PID>          # SIGSTOP (되돌릴 수 있음)
 watchdog-cli terminate <TOKEN>            # 차단되고 무엇을 할지만 출력 (exit 3)
 watchdog-cli terminate <TOKEN> --force    # 실제 SIGTERM 후 종료 확인
 watchdog-cli stopped --resume-all         # Watchdog이 멈춘 프로세스 재개
 watchdog-cli doctor                       # 샘플링 비용과 환경 진단
+watchdog-cli journal                      # Watchdog이 보낸 시그널 기록
+watchdog-cli rules show                   # 사용자 규칙 파일 상태 (init·validate)
+watchdog-cli audit <스냅샷> --labels <라벨>  # 분류 정확도 측정 (snapshot으로 저장)
 ```
 
 - `terminate`·`force-quit`은 PID만으로 실행할 수 없고 TOKEN과 `--force`가 모두 필요합니다.
 - `--force`로도 PID 1, Watchdog 자신, 다른 사용자, 시스템 경로, 신원 불일치·확인 불가 대상은 거부됩니다(exit 4).
+- `watch --auto-suspend`는 머신 전체를 감시합니다. 스크립트나 테스트에서 쓸 때는 반드시 `--only`로 대상을 제한하세요. 그러지 않으면 조건을 넘긴 다른 세션도 멈춥니다.
 - 종료 코드: 0 성공 · 1 실패 · 2 사용법 오류 · 3 `--force` 필요 · 4 안전 계약상 거부.
 - JSON 필드와 enum 문자열은 [`docs/cli-json.md`](docs/cli-json.md)에 고정되어 있습니다.
 - 앱과 CLI는 같은 정지 기록을 공유하므로, CLI로 멈춘 프로세스도 메뉴의 "주의 필요"에 보입니다.
