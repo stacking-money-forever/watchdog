@@ -272,6 +272,52 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
+    func testSessionsSectionListsSessionsAndMembers() {
+        let app = launch(arguments: ["--ui-test-window-fixture"])
+        defer { app.terminate() }
+
+        let window = app.descendants(matching: .any)["watchdog.window"]
+        XCTAssertTrue(window.waitForExistence(timeout: 8))
+
+        let sidebar = app.descendants(matching: .any)["watchdog.sidebar.sessions"]
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
+        sidebar.click()
+
+        let firstSession = app.descendants(matching: .any)["session.71001.9071001.row"]
+        let secondSession = app.descendants(matching: .any)["session.71002.9071002.row"]
+        XCTAssertTrue(firstSession.waitForExistence(timeout: 5))
+        XCTAssertTrue(secondSession.exists)
+
+        expandSessionRow(firstSession, in: app)
+        let member = app.descendants(matching: .any)["process.71003.9071003.row"]
+        XCTAssertTrue(member.waitForExistence(timeout: 5), "member row should appear after expanding the session")
+
+        firstSession.click()
+        let detail = app.descendants(matching: .any)["watchdog.sessions.detail"]
+        XCTAssertTrue(detail.waitForExistence(timeout: 2))
+        let token = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS '9071001' OR value CONTAINS '9071001'")
+        ).firstMatch
+        XCTAssertTrue(token.waitForExistence(timeout: 2), "detail should include the start-time token")
+
+        let suspend = app.descendants(matching: .any)["session.71001.9071001.suspend"]
+        XCTAssertTrue(suspend.waitForExistence(timeout: 2))
+        XCTAssertTrue(suspend.isEnabled)
+
+        firstSession.rightClick()
+        let terminate = app.menuItems["종료…"]
+        XCTAssertTrue(terminate.waitForExistence(timeout: 3))
+        terminate.click()
+
+        let confirmation = app.descendants(matching: .any)["watchdog.destructive-confirmation"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["프로세스를 종료할까요?"].exists)
+        app.windows.firstMatch.buttons["취소"].click()
+        XCTAssertTrue(confirmation.waitForNonExistence(timeout: 2))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
+    }
+
+    @MainActor
     func testPopoverHasOpenWindowButton() {
         let app = launch(arguments: ["--ui-test-fixture"])
         defer { app.terminate() }
@@ -284,6 +330,27 @@ final class WatchdogUITests: XCTestCase {
         // MenuBarExtra popover. Clicking here can open the SwiftUI Window, but
         // status-item / multi-window focus is the unstable part this fixture
         // exists to avoid — assert the control itself, not the handoff.
+    }
+
+    @MainActor
+    private func expandSessionRow(_ row: XCUIElement, in app: XCUIApplication) {
+        let member = app.descendants(matching: .any)["process.71003.9071003.row"]
+        if member.exists { return }
+
+        row.click()
+        let triangles = app.disclosureTriangles
+        if triangles.firstMatch.waitForExistence(timeout: 1) {
+            triangles.firstMatch.click()
+            if member.waitForExistence(timeout: 2) { return }
+        }
+
+        row.click()
+        row.typeKey(.rightArrow, modifierFlags: [])
+        if member.waitForExistence(timeout: 2) { return }
+
+        row.click()
+        row.typeKey(.return, modifierFlags: [])
+        _ = member.waitForExistence(timeout: 2)
     }
 
     @MainActor

@@ -1,34 +1,6 @@
 import AppKit
 import SwiftUI
 
-private struct PendingProcessAction: Identifiable {
-    enum Kind {
-        case terminate
-        case forceQuit
-    }
-
-    let id = UUID()
-    let process: ProcessSnapshot
-    let kind: Kind
-    let confirmationRequest: DestructiveActionConfirmationRequest
-
-    var title: String {
-        switch kind {
-        case .terminate: return "프로세스를 종료할까요?"
-        case .forceQuit: return "프로세스를 강제 종료할까요?"
-        }
-    }
-
-    var message: String {
-        switch kind {
-        case .terminate:
-            return "\(process.displayName) · PID \(process.id)\nSIGTERM을 보내 정리 후 종료할 기회를 줍니다."
-        case .forceQuit:
-            return "\(process.displayName) · PID \(process.id)\nSIGKILL을 보내 즉시 종료합니다. 저장하지 않은 작업은 사라집니다."
-        }
-    }
-}
-
 private struct MenuActionFeedback: Identifiable {
     let id = UUID()
     let isError: Bool
@@ -87,22 +59,24 @@ struct WatchdogMenuView: View {
                 .accessibilityHidden(pendingAction != nil)
 
                 if let pendingAction {
-                    destructiveConfirmation(for: pendingAction)
+                    DestructiveConfirmationCard(
+                        action: pendingAction,
+                        onCancel: { cancelDestructiveAction(pendingAction) },
+                        onConfirm: {
+                            self.pendingAction = nil
+                            completeDestructiveAction(pendingAction)
+                        }
+                    )
                 }
             } else {
                 Color.clear
             }
         }
-        .onReceive(monitor.$processes) { _ in
-            dismissConfirmationIfInvalid()
-        }
-        .onReceive(monitor.$samplingError) { _ in
-            dismissConfirmationIfInvalid()
-        }
-        .task(id: pendingAction?.id) {
-            guard pendingAction != nil else { return }
-            try? await Task.sleep(for: ProcessMonitor.confirmationValidity + .milliseconds(100))
-            dismissConfirmationIfInvalid()
+        .dismissInvalidDestructiveConfirmation(pendingAction: $pendingAction, monitor: monitor) { pending, stillListed in
+            let message = stillListed
+                ? ProcessControlError.confirmationExpired.localizedDescription
+                : ProcessControlError.processChanged.localizedDescription
+            showMenuFeedback(.init(isError: true, message: message))
         }
         .onAppear {
             isShown = true
@@ -114,62 +88,6 @@ struct WatchdogMenuView: View {
             isShown = false
             monitor.isPresented = false
         }
-    }
-
-    private func dismissConfirmationIfInvalid() {
-        guard let pending = pendingAction,
-              !monitor.isConfirmationValid(pending.confirmationRequest)
-        else { return }
-        pendingAction = nil
-        monitor.cancelDestructiveConfirmation(pending.confirmationRequest)
-        let stillListed = monitor.processes.contains { $0.identity == pending.process.identity }
-        let message = stillListed
-            ? ProcessControlError.confirmationExpired.localizedDescription
-            : ProcessControlError.processChanged.localizedDescription
-        showMenuFeedback(.init(isError: true, message: message))
-    }
-
-    private func destructiveConfirmation(for action: PendingProcessAction) -> some View {
-        ZStack {
-            Color.black.opacity(0.28)
-                .contentShape(Rectangle())
-                .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 16) {
-                Text(action.title)
-                    .font(.headline)
-
-                Text(action.message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                HStack {
-                    Spacer()
-
-                    Button("취소") {
-                        cancelDestructiveAction(action)
-                    }
-                    .keyboardShortcut(.cancelAction)
-
-                    Button(action.kind == .terminate ? "종료" : "강제 종료", role: .destructive) {
-                        pendingAction = nil
-                        completeDestructiveAction(action)
-                    }
-                    .accessibilityIdentifier("watchdog.destructive-confirmation.confirm")
-                }
-            }
-            .padding(20)
-            .frame(width: 360)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(.separator.opacity(0.7))
-            }
-            .shadow(radius: 18, y: 8)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("watchdog.destructive-confirmation")
     }
 
     private var header: some View {

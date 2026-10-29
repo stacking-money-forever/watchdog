@@ -18,6 +18,8 @@ struct WatchdogWindowView: View {
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
             switch selectedSection {
+            case .sessions:
+                SessionsView(monitor: monitor)
             case .journal:
                 JournalView(monitor: monitor)
             case .rules:
