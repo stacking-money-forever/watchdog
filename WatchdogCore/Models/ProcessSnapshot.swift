@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-enum ProcessKind: String, Equatable, Sendable {
+enum ProcessKind: String, CaseIterable, Equatable, Sendable {
     case agent
     case service
     case browserRenderer
@@ -10,7 +10,7 @@ enum ProcessKind: String, Equatable, Sendable {
     case other
 }
 
-enum AgentConfidence: String, Equatable, Sendable {
+enum AgentConfidence: String, CaseIterable, Equatable, Sendable {
     case known
     case suspected
 }
@@ -61,7 +61,7 @@ struct ProcessActionability: Sendable {
     }
 }
 
-enum OrphanReason: String, Sendable {
+enum OrphanReason: String, CaseIterable, Sendable {
     case reparentedToLaunchd
     case missingParent
     case cyclicLineage

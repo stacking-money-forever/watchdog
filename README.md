@@ -69,6 +69,7 @@ watchdog-cli doctor                       # 샘플링 비용과 환경 진단
 - `terminate`·`force-quit`은 PID만으로 실행할 수 없고 TOKEN과 `--force`가 모두 필요합니다.
 - `--force`로도 PID 1, Watchdog 자신, 다른 사용자, 시스템 경로, 신원 불일치·확인 불가 대상은 거부됩니다(exit 4).
 - 종료 코드: 0 성공 · 1 실패 · 2 사용법 오류 · 3 `--force` 필요 · 4 안전 계약상 거부.
+- JSON 필드와 enum 문자열은 [`docs/cli-json.md`](docs/cli-json.md)에 고정되어 있습니다.
 - 앱과 CLI는 같은 정지 기록을 공유하므로, CLI로 멈춘 프로세스도 메뉴의 "주의 필요"에 보입니다.
 
 ## 안전 계약

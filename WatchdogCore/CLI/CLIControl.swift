@@ -55,6 +55,15 @@ enum CLIAction: String, CaseIterable, Sendable {
     case terminate
     case forceQuit = "force-quit"
 
+    var cliJSONValue: String {
+        switch self {
+        case .suspend: return CLIJSONContract.ControlAction.suspend.rawValue
+        case .resume: return CLIJSONContract.ControlAction.resume.rawValue
+        case .terminate: return CLIJSONContract.ControlAction.terminate.rawValue
+        case .forceQuit: return CLIJSONContract.ControlAction.forceQuit.rawValue
+        }
+    }
+
     var controlAction: ProcessControlAction {
         switch self {
         case .suspend: return .suspend
@@ -134,11 +143,11 @@ enum CLIDecision: Equatable, Sendable {
 }
 
 enum CLIExitCode {
-    static let success: Int32 = 0
-    static let failure: Int32 = 1
-    static let usage: Int32 = 2
-    static let blocked: Int32 = 3
-    static let refused: Int32 = 4
+    static let success = CLIJSONContract.ExitCode.success
+    static let failure = CLIJSONContract.ExitCode.failure
+    static let usage = CLIJSONContract.ExitCode.usage
+    static let blocked = CLIJSONContract.ExitCode.blocked
+    static let refused = CLIJSONContract.ExitCode.refused
 }
 
 enum CLIPolicy {
@@ -170,7 +179,7 @@ enum CLIPolicy {
             case .suspend:
                 if live.kind != .agent {
                     warnings.append(
-                        "\(live.displayName)은(는) 코딩 에이전트가 아닙니다(\(live.kind.rawValue)). 앱을 정지하면 응답하지 않게 됩니다. resume으로 되돌릴 수 있습니다."
+                        "\(live.displayName)은(는) 코딩 에이전트가 아닙니다(\(live.kind.cliJSONValue)). 앱을 정지하면 응답하지 않게 됩니다. resume으로 되돌릴 수 있습니다."
                     )
                 }
                 if live.isSuspended {

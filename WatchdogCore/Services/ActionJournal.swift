@@ -4,14 +4,14 @@ import Foundation
 /// One Watchdog process-control action, kept as a durable history line.
 /// The ledger is "what is stopped now"; this journal is "what we did".
 struct ActionJournalEntry: Codable, Equatable, Sendable {
-    enum Source: String, Codable, Sendable {
+    enum Source: String, CaseIterable, Codable, Sendable {
         case app
         case auto
         case cli
     }
 
     /// Stable `ProcessControlAction` spelling for JSONL (`forceQuit`, not `force-quit`).
-    enum ActionKind: String, Codable, Sendable {
+    enum ActionKind: String, CaseIterable, Codable, Sendable {
         case suspend
         case resume
         case terminate
@@ -90,17 +90,7 @@ struct ActionJournalEntry: Codable, Equatable, Sendable {
     }
 
     static func outcomeString(_ outcome: ProcessActionOutcome) -> String {
-        switch outcome {
-        case .signalDelivered: return "signalDelivered"
-        case .suspended: return "suspended"
-        case .resumed: return "resumed"
-        case .awaitingExit: return "awaitingExit"
-        case .exited: return "exited"
-        case .stillRunning: return "stillRunning"
-        case .identityChanged: return "identityChanged"
-        case .verificationFailed: return "verificationFailed"
-        case let .failed(message): return "failed:\(message)"
-        }
+        CLIJSONContract.outcomeString(outcome)
     }
 }
 

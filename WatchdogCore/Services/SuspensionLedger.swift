@@ -3,7 +3,7 @@ import Foundation
 
 /// A process that Watchdog (the app or the CLI) stopped with SIGSTOP.
 struct SuspensionRecord: Codable, Hashable, Sendable {
-    enum Source: String, Codable, Sendable {
+    enum Source: String, CaseIterable, Codable, Sendable {
         case auto
         case manual
         case cli
