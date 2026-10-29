@@ -20,6 +20,8 @@ struct WatchdogWindowView: View {
             switch selectedSection {
             case .sessions:
                 SessionsView(monitor: monitor)
+            case .processes:
+                ProcessesView(monitor: monitor)
             case .journal:
                 JournalView(monitor: monitor)
             case .rules:
@@ -36,6 +38,10 @@ struct WatchdogWindowView: View {
         .onAppear {
             applyPendingSection()
             WatchdogWindowOpener.bringMainWindowForward()
+            #if DEBUG
+            ProcessesUITestObserver.shared.install()
+            ProcessesUITestObserver.shared.onShowProcesses = { selectedSection = .processes }
+            #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: WatchdogWindowOpener.sectionDidChange)) { notification in
             if let raw = notification.userInfo?["section"] as? String,

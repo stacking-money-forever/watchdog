@@ -230,56 +230,23 @@ struct SessionsView: View {
     }
 
     private var detailPanel: some View {
-        Group {
-            if let selection, let node = node(for: selection), let process = process(for: node) {
-                selectedDetail(process: process, node: node)
-            } else {
-                Text("행을 선택하면 상세가 보입니다")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .accessibilityIdentifier("watchdog.sessions.detail")
+        let selected: (ProcessSnapshot, [AlertReason])? = {
+            guard let selection, let node = node(for: selection), let process = process(for: node) else {
+                return nil
             }
-        }
-        .frame(minHeight: 132)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.55), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func selectedDetail(process: ProcessSnapshot, node: SessionTableNode) -> some View {
-        let reasons: [AlertReason] = {
+            let reasons: [AlertReason]
             if case .session = node.kind, let session = session(for: node) {
-                return monitor.sessionAlertReasons(session)
+                reasons = monitor.sessionAlertReasons(session)
+            } else {
+                reasons = monitor.alertReasons(for: process)
             }
-            return monitor.alertReasons(for: process)
+            return (process, reasons)
         }()
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("선택 상세")
-                .font(.headline)
-            detailLine("토큰", SessionsPresentation.identityToken(process.identity))
-            detailLine("실행 경로", process.executablePath)
-            detailLine("실행 스크립트", process.launchScript ?? "—")
-            detailLine("작업 디렉터리", process.workingDirectory ?? "—")
-            detailLine("워크트리 상태", worktreeText(process.worktreeState))
-            detailLine("시작한 에이전트", ancestorText(process.agentAncestor))
-            detailLine("종류", SessionsPresentation.kindLabel(process.kind))
-            detailLine("사유", reasons.isEmpty ? "—" : reasons.map(\.text).joined(separator: " · "))
-        }
-        .font(.callout)
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("watchdog.sessions.detail")
-    }
-
-    private func detailLine(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(title)
-                .foregroundStyle(.secondary)
-                .frame(width: 108, alignment: .leading)
-            Text(value)
-                .textSelection(.enabled)
-                .lineLimit(2)
-        }
+        return ProcessDetailPanel(
+            process: selected?.0,
+            reasons: selected?.1 ?? [],
+            identifier: "watchdog.sessions.detail"
+        )
     }
 
     @ViewBuilder
@@ -557,19 +524,6 @@ struct SessionsView: View {
             guard let process = process(for: node) else { return node.id }
             return "\(process.displayName), PID \(process.id)"
         }
-    }
-
-    private func worktreeText(_ state: WorktreeState?) -> String {
-        guard let state else { return "—" }
-        if let detail = state.detail, !detail.isEmpty {
-            return "\(state.verdict.localizedDescription) · \(detail)"
-        }
-        return state.verdict.localizedDescription
-    }
-
-    private func ancestorText(_ ancestor: AgentAncestor?) -> String {
-        guard let ancestor else { return "—" }
-        return "\(ancestor.name) (PID \(ancestor.pid))"
     }
 
     private func sessionControlIdentifier(_ session: AgentSession, _ control: String) -> String {

@@ -272,6 +272,61 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
+    func testProcessesSectionSearchFilterAndNoMatch() {
+        let app = launch(arguments: ["--ui-test-window-fixture"])
+        defer { app.terminate() }
+
+        let window = app.descendants(matching: .any)["watchdog.window"]
+        XCTAssertTrue(window.waitForExistence(timeout: 8))
+
+        let sidebar = app.descendants(matching: .any)["watchdog.sidebar.processes"]
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
+        sidebar.click()
+
+        let first = app.descendants(matching: .any)["process.71001.9071001.row"]
+        let second = app.descendants(matching: .any)["process.71002.9071002.row"]
+        let make = app.descendants(matching: .any)["process.71003.9071003.row"]
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertTrue(second.exists)
+        XCTAssertTrue(make.exists)
+
+        let field = app.textFields["watchdog.processes.search"]
+        XCTAssertTrue(field.waitForExistence(timeout: 2))
+        focusSearchField(field)
+        field.typeText("fixture-with-no-matching-process")
+
+        let empty = app.descendants(matching: .any)["watchdog.processes.empty"]
+        XCTAssertTrue(empty.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["검색 결과가 없습니다"].exists)
+
+        field.typeKey("a", modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: [])
+        if first.waitForExistence(timeout: 1) == false {
+            DistributedNotificationCenter.default().post(
+                name: Notification.Name("dev.justn.watchdog.uitest.clear-search"),
+                object: nil
+            )
+        }
+        XCTAssertTrue(first.waitForExistence(timeout: 5))
+        XCTAssertTrue(make.waitForExistence(timeout: 2))
+
+        let agentFilter = app.descendants(matching: .any)["watchdog.processes.filter.agents"]
+        if agentFilter.waitForExistence(timeout: 2) {
+            agentFilter.click()
+        } else if app.radioButtons["에이전트"].exists {
+            app.radioButtons["에이전트"].click()
+        }
+        DistributedNotificationCenter.default().post(
+            name: Notification.Name("dev.justn.watchdog.uitest.select-agents-filter"),
+            object: nil
+        )
+        XCTAssertTrue(make.waitForNonExistence(timeout: 5), "agent filter should hide the make child")
+        XCTAssertTrue(first.waitForExistence(timeout: 2))
+        XCTAssertTrue(second.exists)
+        XCTAssertFalse(make.exists)
+    }
+
+    @MainActor
     func testSessionsSectionListsSessionsAndMembers() {
         let app = launch(arguments: ["--ui-test-window-fixture"])
         defer { app.terminate() }
@@ -330,6 +385,20 @@ final class WatchdogUITests: XCTestCase {
         // MenuBarExtra popover. Clicking here can open the SwiftUI Window, but
         // status-item / multi-window focus is the unstable part this fixture
         // exists to avoid — assert the control itself, not the handoff.
+    }
+
+    @MainActor
+    private func searchFieldHasFocus(_ field: XCUIElement) -> Bool {
+        NSPredicate(format: "hasKeyboardFocus == YES").evaluate(with: field)
+    }
+
+    @MainActor
+    private func focusSearchField(_ field: XCUIElement) {
+        field.click()
+        if searchFieldHasFocus(field) { return }
+        Thread.sleep(forTimeInterval: 0.3)
+        field.click()
+        XCTAssertTrue(searchFieldHasFocus(field), "search field did not take keyboard focus after retry")
     }
 
     @MainActor
