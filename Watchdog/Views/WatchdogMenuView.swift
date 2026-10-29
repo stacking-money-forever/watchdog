@@ -238,63 +238,8 @@ struct WatchdogMenuView: View {
 
             DisclosureGroup("감지 규칙", isExpanded: $showsRules) {
                 VStack(spacing: 10) {
-                    HStack {
-                        Text("CPU 임계값")
-                        Spacer()
-                        Text("\(Int(monitor.threshold))%")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $monitor.threshold, in: min(25, monitor.threshold)...max(300, monitor.threshold), step: 5)
-
-                    HStack {
-                        Text("프로세스 메모리 임계값")
-                        Spacer()
-                        Text("\(monitor.memoryThresholdGB, specifier: "%.1f")GB")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    Slider(value: $monitor.memoryThresholdGB, in: min(0.5, monitor.memoryThresholdGB)...max(16, monitor.memoryThresholdGB), step: 0.5)
-
-                    Stepper(
-                        "임계값 유지 시간: \(Int(monitor.sustainedDuration))초",
-                        value: $monitor.sustainedDuration,
-                        // A value set from the CLI or defaults may sit outside
-                        // the usual range; keep it reachable and visible.
-                        in: min(5, monitor.sustainedDuration)...max(120, monitor.sustainedDuration),
-                        step: 5
-                    )
-                    Toggle("CPU 폭주 에이전트 자동 일시 정지", isOn: $monitor.autoSuspendEnabled)
-                        .help("CPU 임계값을 지속해서 넘긴 코딩 에이전트에만 SIGSTOP을 보냅니다. 메모리만 넘긴 프로세스와 일반 앱은 멈추지 않으며, 직접 재개한 프로세스는 다시 멈추지 않습니다.")
-                    Toggle("시스템 알림", isOn: $monitor.notificationsEnabled)
-                    if monitor.notificationAuthorization == .denied {
-                        HStack {
-                            Label("macOS 알림 권한이 꺼져 있습니다", systemImage: "bell.slash")
-                                .foregroundStyle(.orange)
-                            Spacer()
-                            Button("알림 설정 열기") {
-                                if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
-                                    NSWorkspace.shared.open(url)
-                                }
-                            }
-                            .buttonStyle(.link)
-                        }
-                    }
-
-                    Toggle(
-                        "로그인 시 자동 실행",
-                        isOn: Binding(
-                            get: { launchAtLogin.isEnabled },
-                            set: { launchAtLogin.setEnabled($0) }
-                        )
-                    )
-                    if launchAtLogin.requiresApproval {
-                        Text("시스템 설정의 로그인 항목에서 승인이 필요합니다")
-                            .foregroundStyle(.orange)
-                    } else if let errorMessage = launchAtLogin.errorMessage {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                    }
+                    DetectionRulesControls(monitor: monitor)
+                    NotificationAndLoginControls(monitor: monitor, launchAtLogin: launchAtLogin)
                 }
                 .font(.caption)
                 .padding(.top, 8)

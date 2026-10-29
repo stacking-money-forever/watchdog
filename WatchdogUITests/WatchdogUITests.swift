@@ -236,6 +236,34 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
+    func testRulesAndSettingsSectionsShowControls() {
+        let app = launch(arguments: ["--ui-test-window-fixture"])
+        defer { app.terminate() }
+
+        let window = app.descendants(matching: .any)["watchdog.window"]
+        XCTAssertTrue(window.waitForExistence(timeout: 8))
+
+        let rulesSidebar = app.descendants(matching: .any)["watchdog.sidebar.rules"]
+        XCTAssertTrue(rulesSidebar.waitForExistence(timeout: 2))
+        rulesSidebar.click()
+        XCTAssertTrue(app.descendants(matching: .any)["watchdog.rules.cpu"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["watchdog.rules.auto-suspend"].exists)
+
+        let settingsSidebar = app.descendants(matching: .any)["watchdog.sidebar.settings"]
+        XCTAssertTrue(settingsSidebar.waitForExistence(timeout: 2))
+        settingsSidebar.click()
+        XCTAssertTrue(app.descendants(matching: .any)["watchdog.settings.login"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["watchdog.settings.notifications"].exists)
+
+        let expected = Bundle(for: Self.self)
+            .object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let version = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", expected, expected)
+        ).firstMatch
+        XCTAssertTrue(version.waitForExistence(timeout: 2))
+    }
+
+    @MainActor
     func testPopoverHasOpenWindowButton() {
         let app = launch(arguments: ["--ui-test-fixture"])
         defer { app.terminate() }

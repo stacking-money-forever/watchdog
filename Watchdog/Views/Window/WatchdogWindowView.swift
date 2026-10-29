@@ -20,6 +20,10 @@ struct WatchdogWindowView: View {
             switch selectedSection {
             case .journal:
                 JournalView(monitor: monitor)
+            case .rules:
+                RulesView(monitor: monitor)
+            case .settings:
+                SettingsView(monitor: monitor, launchAtLogin: launchAtLogin)
             default:
                 WindowSectionPlaceholder(section: selectedSection)
             }
