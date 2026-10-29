@@ -15,8 +15,11 @@ let usageText = """
   inspect <TOKEN|PID> [--json]
       한 프로세스의 신원, 상태, 작업 디렉터리, 워크트리 상태를 보여 줍니다.
   watch [--interval 초] [--count N] [--duration 초] [--cpu %] [--sustain 초] [--memory GB]
-        [--auto-suspend] [--json]
+        [--auto-suspend] [--scope agent|session] [--only TOKEN|PID[,…]] [--json]
       앱과 같은 감지 엔진으로 지속 감시하며 경고 이벤트를 출력합니다. Ctrl-C로 끝냅니다.
+      --scope는 자동 정지가 프로세스 단위인지 세션(루트+멤버) 단위인지입니다. 기본 agent.
+      --only는 반복할 수 있습니다. 자동 정지를 그 프로세스와 자손으로 제한합니다.
+      세션 범위에서는 루트 자체가 --only에 있어야 합니다.
   stopped [--resume-all] [--json]
       Watchdog(앱·CLI)이 일시 정지한 채 멈춰 있는 프로세스를 보여 줍니다.
   doctor [--json]
@@ -52,6 +55,7 @@ struct Arguments {
     var positionals: [String] = []
     var flags: Set<String> = []
     var options: [String: String] = [:]
+    var onlyValues: [String] = []
 
     static let valueOptions: Set<String> = [
         "--scope", "--search", "--interval", "--count", "--duration", "--cpu", "--sustain", "--memory",
@@ -62,7 +66,12 @@ struct Arguments {
     init(_ raw: [String]) throws {
         var iterator = raw.makeIterator()
         while let argument = iterator.next() {
-            if Self.valueOptions.contains(argument) {
+            if argument == "--only" {
+                guard let value = iterator.next() else {
+                    throw CLIUsageError("\(argument)에 값이 필요합니다.")
+                }
+                onlyValues.append(value)
+            } else if Self.valueOptions.contains(argument) {
                 guard let value = iterator.next() else {
                     throw CLIUsageError("\(argument)에 값이 필요합니다.")
                 }
@@ -95,6 +104,23 @@ struct Arguments {
 struct CLIUsageError: Error {
     let message: String
     init(_ message: String) { self.message = message }
+}
+
+func parseOnlySelectors(_ values: [String]) throws -> [CLITarget] {
+    var selectors: [CLITarget] = []
+    for value in values {
+        for piece in value.split(separator: ",", omittingEmptySubsequences: false) {
+            let text = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else {
+                throw CLIUsageError("--only 값은 TOKEN 또는 PID입니다.")
+            }
+            guard let target = CLITarget(parsing: text) else {
+                throw CLIUsageError("--only 값은 TOKEN 또는 PID입니다: \(text)")
+            }
+            selectors.append(target)
+        }
+    }
+    return selectors
 }
 
 // MARK: - Output helpers
@@ -490,9 +516,16 @@ func runControl(_ action: CLIAction, _ arguments: Arguments) async throws -> Int
                 "token": report.token.description,
                 "name": report.name,
                 "outcome": report.outcome.localizedDescription,
+                "groupResumed": report.accompanying.map(\.token.description).joined(separator: ","),
             ])
         } else {
             print("\(report.action.rawValue): \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)")
+            if !report.accompanying.isEmpty {
+                print("세션 그룹 멤버 \(report.accompanying.count)개도 재개했습니다")
+                for extra in report.accompanying {
+                    print("  \(extra.name) (\(extra.token)) → \(extra.outcome.localizedDescription)")
+                }
+            }
         }
         return report.outcome.isError ? CLIExitCode.failure : CLIExitCode.success
     }
@@ -511,14 +544,35 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
         var failures = 0
         var results: [ResumeResult] = []
         let control = CLIControl(ledger: ledger)
+        var handled: Set<ProcessIdentity> = []
         for record in records {
+            guard !handled.contains(record.identity) else { continue }
             let token = IdentityToken(record.identity).description
             let result = try await control.run(.resume, target: .token(IdentityToken(record.identity)), force: true)
+            handled.insert(record.identity)
             switch result {
             case let .performed(report):
+                handled.formUnion(report.accompanying.map(\.token.identity))
                 if report.outcome.isError { failures += 1 }
                 results.append(.init(token: token, name: report.name, result: report.outcome.isError ? "failed" : "resumed", message: report.outcome.localizedDescription))
-                if !arguments.json { print("resume: \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)") }
+                if !arguments.json {
+                    print("resume: \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)")
+                    if !report.accompanying.isEmpty {
+                        print("세션 그룹 멤버 \(report.accompanying.count)개도 재개했습니다")
+                    }
+                }
+                for extra in report.accompanying {
+                    results.append(.init(
+                        token: extra.token.description,
+                        name: extra.name,
+                        result: extra.outcome.isError ? "failed" : "resumed",
+                        message: extra.outcome.localizedDescription
+                    ))
+                    if extra.outcome.isError { failures += 1 }
+                    if !arguments.json {
+                        print("  resume: \(extra.name) (\(extra.token)) → \(extra.outcome.localizedDescription)")
+                    }
+                }
             case let .failed(error, _):
                 failures += 1
                 let message = error.errorDescription ?? "\(error)"
@@ -544,6 +598,7 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
             let path: String
             let suspendedAt: Date
             let source: String
+            let groupID: String?
         }
         emitJSON(records.map {
             StoppedRecord(
@@ -551,7 +606,8 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
                 name: $0.displayName,
                 path: $0.executablePath,
                 suspendedAt: $0.suspendedAt,
-                source: $0.source.rawValue
+                source: $0.source.rawValue,
+                groupID: $0.groupID
             )
         })
         return CLIExitCode.success
@@ -563,16 +619,42 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
     print(pad("TOKEN", 30) + pad("NAME", 24) + pad("SOURCE", 8) + "SUSPENDED AT")
-    for record in records {
+    for row in groupedStoppedRows(records) {
+        let indent = row.isMember ? "  " : ""
         print(
-            pad(IdentityToken(record.identity).description, 30)
-                + pad(record.displayName, 24)
-                + pad(record.source.rawValue, 8)
-                + formatter.string(from: record.suspendedAt)
+            pad(indent + IdentityToken(row.record.identity).description, 30)
+                + pad(row.record.displayName, 24)
+                + pad(row.record.source.rawValue, 8)
+                + formatter.string(from: row.record.suspendedAt)
         )
     }
     print("\n재개: watchdog-cli resume <TOKEN> 또는 watchdog-cli stopped --resume-all")
     return CLIExitCode.success
+}
+
+private struct StoppedRow {
+    let record: SuspensionRecord
+    let isMember: Bool
+}
+
+private func groupedStoppedRows(_ records: [SuspensionRecord]) -> [StoppedRow] {
+    var emitted: Set<ProcessIdentity> = []
+    var rows: [StoppedRow] = []
+    for record in records {
+        guard !emitted.contains(record.identity) else { continue }
+        guard let groupID = record.groupID, IdentityToken(record.identity).description == groupID else {
+            emitted.insert(record.identity)
+            rows.append(StoppedRow(record: record, isMember: false))
+            continue
+        }
+        emitted.insert(record.identity)
+        rows.append(StoppedRow(record: record, isMember: false))
+        for member in records where member.groupID == groupID && member.identity != record.identity {
+            guard emitted.insert(member.identity).inserted else { continue }
+            rows.append(StoppedRow(record: member, isMember: true))
+        }
+    }
+    return rows
 }
 
 // MARK: - watch
@@ -598,8 +680,18 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     settings.sustainedDuration = MonitorSettings.normalizedDuration(try arguments.double("--sustain", default: settings.sustainedDuration, range: 2...300))
     settings.memoryThresholdGB = MonitorSettings.normalizedMemory(try arguments.double("--memory", default: settings.memoryThresholdGB, range: 0.1...1_024))
     // Auto-suspend never inherits the app setting; the CLI only stops
-    // processes when explicitly asked.
+    // processes when explicitly asked. Scope defaults to agent and is only
+    // meaningful on this command (`list` uses --scope for a different enum).
     settings.autoSuspendEnabled = arguments.flags.contains("--auto-suspend")
+    if let scopeText = arguments.options["--scope"] {
+        guard let scope = MonitorSettings.AutoSuspendScope(rawValue: scopeText) else {
+            throw CLIUsageError("watch의 --scope는 agent 또는 session입니다.")
+        }
+        settings.autoSuspendScope = scope
+    } else {
+        settings.autoSuspendScope = .agent
+    }
+    let onlySelectors = try parseOnlySelectors(arguments.onlyValues)
     let interval = try arguments.double("--interval", default: 2, range: 0.5...60)
     var maximumTicks: Int?
     if let text = arguments.options["--count"] {
@@ -641,8 +733,11 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     emit(
         "watch.start",
         nil,
-        "CPU \(Int(settings.cpuThreshold))% · 메모리 \(memoryText(settings.memoryThresholdBytes)) · 지속 \(Int(settings.sustainedDuration))초 · 자동 정지 \(settings.autoSuspendEnabled ? "켬" : "끔")"
+        "CPU \(Int(settings.cpuThreshold))% · 메모리 \(memoryText(settings.memoryThresholdBytes)) · 지속 \(Int(settings.sustainedDuration))초 · 자동 정지 \(settings.autoSuspendEnabled ? "켬(\(settings.autoSuspendScope.rawValue))" : "끔")"
     )
+    if settings.autoSuspendEnabled, !onlySelectors.isEmpty {
+        emit("auto-suspend.restrict", nil, "auto-suspend restricted to \(onlySelectors.count) targets")
+    }
     let sampler = ProcessSampler()
     let control = CLIControl()
     var engine = MonitorEngine(continuityGap: .milliseconds(Int(max(5, interval * 2.5) * 1_000)))
@@ -677,7 +772,10 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
                     emit("resumed.by-user", process, "자동 정지 대상에서 제외")
                 }
             }
-            let update = engine.ingest(sample.processes, settings: settings, at: clock.now)
+            var update = engine.ingest(sample.processes, settings: settings, at: clock.now)
+            if settings.autoSuspendEnabled, !onlySelectors.isEmpty {
+                update = AutoSuspendTargetFilter.restrict(update, to: onlySelectors)
+            }
             let byIdentity = Dictionary(update.processes.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
             for identity in update.newlyHot {
                 if let process = byIdentity[identity] {
@@ -730,8 +828,13 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             previousHighMemory = update.highMemory
             previousHotSessions = update.hotSessions
             previousHighMemorySessions = update.highMemorySessions
-            for candidate in update.autoSuspendCandidates {
-                switch try await control.run(.suspend, target: .token(IdentityToken(candidate.identity)), force: true) {
+            func suspendCandidate(_ candidate: ProcessSnapshot, groupID: String?) async throws {
+                switch try await control.run(
+                    .suspend,
+                    target: .token(IdentityToken(candidate.identity)),
+                    force: true,
+                    groupID: groupID
+                ) {
                 case let .performed(report):
                     autoSuspended.insert(candidate.identity)
                     emit("auto-suspend", candidate, report.outcome.localizedDescription)
@@ -739,6 +842,20 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
                     emit("auto-suspend.failed", candidate, error.errorDescription)
                 case let .decided(decision):
                     emit("auto-suspend.skipped", candidate, "\(decision)")
+                }
+            }
+            if settings.autoSuspendScope == .session {
+                for group in update.autoSuspendGroups {
+                    guard let root = byIdentity[group.root] else { continue }
+                    let groupID = IdentityToken(group.root).description
+                    try await suspendCandidate(root, groupID: groupID)
+                    for member in group.members {
+                        try await suspendCandidate(member, groupID: groupID)
+                    }
+                }
+            } else {
+                for candidate in update.autoSuspendCandidates {
+                    try await suspendCandidate(candidate, groupID: nil)
                 }
             }
             if !arguments.json, ticks == 1 {

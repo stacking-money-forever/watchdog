@@ -227,6 +227,24 @@ struct CLIActionReport: Sendable {
     let name: String
     let outcome: ProcessActionOutcome
     let warnings: [String]
+    /// Other session members resumed because this identity was the group root.
+    let accompanying: [CLIActionReport]
+
+    init(
+        action: CLIAction,
+        token: IdentityToken,
+        name: String,
+        outcome: ProcessActionOutcome,
+        warnings: [String],
+        accompanying: [CLIActionReport] = []
+    ) {
+        self.action = action
+        self.token = token
+        self.name = name
+        self.outcome = outcome
+        self.warnings = warnings
+        self.accompanying = accompanying
+    }
 }
 
 /// Executes a CLI action through the same safety pipeline as the app: a fresh
@@ -272,7 +290,56 @@ struct CLIControl: Sendable {
         case failed(ProcessControlError, refused: Bool)
     }
 
-    func run(_ action: CLIAction, target: CLITarget, force: Bool) async throws -> Result {
+    func run(
+        _ action: CLIAction,
+        target: CLITarget,
+        force: Bool,
+        groupID: String? = nil
+    ) async throws -> Result {
+        let companions: [SuspensionRecord]
+        if action == .resume, let live = try observe(target.pid) {
+            companions = ledger.groupCompanions(of: live.identity)
+        } else {
+            companions = []
+        }
+        let result = try await perform(
+            action,
+            target: target,
+            force: force,
+            groupID: groupID
+        )
+        guard action == .resume, case let .performed(report) = result, !companions.isEmpty else {
+            return result
+        }
+        var accompanying: [CLIActionReport] = []
+        for companion in companions {
+            let extra = try await perform(
+                .resume,
+                target: .token(IdentityToken(companion.identity)),
+                force: true
+            )
+            if case let .performed(memberReport) = extra {
+                accompanying.append(memberReport)
+            }
+        }
+        return .performed(
+            CLIActionReport(
+                action: report.action,
+                token: report.token,
+                name: report.name,
+                outcome: report.outcome,
+                warnings: report.warnings,
+                accompanying: accompanying
+            )
+        )
+    }
+
+    private func perform(
+        _ action: CLIAction,
+        target: CLITarget,
+        force: Bool,
+        groupID: String? = nil
+    ) async throws -> Result {
         let clock = ContinuousClock()
         let live = try observe(target.pid)
         let observation = ObservationToken(generation: 1, instant: clock.now)
@@ -308,7 +375,8 @@ struct CLIControl: Sendable {
                             identity: live.identity,
                             executablePath: live.executablePath,
                             suspendedAt: Date(),
-                            source: .cli
+                            source: .cli,
+                            groupID: groupID
                         )
                     )
                 } catch {

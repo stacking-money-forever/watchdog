@@ -186,6 +186,167 @@ final class MonitorEngineTests: XCTestCase {
         XCTAssertTrue(afterFailure.hot.isEmpty)
     }
 
+    func testSessionAutoSuspendGroupsRootAndMembersWhenScopeIsSession() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let root = agent(pid: 9_090, cpu: 10)
+        let childA = snapshot(pid: 9_091, path: "/usr/bin/make", cpu: 50, parent: 9_090)
+        let childB = snapshot(pid: 9_092, path: "/usr/bin/make", cpu: 50, parent: 9_090)
+        let tree = [root, childA, childB]
+        var sessionSettings = settings
+        sessionSettings.autoSuspendScope = .session
+
+        _ = engine.ingest(tree, settings: sessionSettings, at: start)
+        let update = engine.ingest(tree, settings: sessionSettings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertEqual(update.newlyHotSessions, [root.identity])
+        XCTAssertEqual(update.autoSuspendGroups.count, 1)
+        XCTAssertEqual(update.autoSuspendGroups.first?.root, root.identity)
+        XCTAssertEqual(Set(update.autoSuspendGroups.first?.members.map(\.id) ?? []), [childA.id, childB.id])
+        XCTAssertTrue(update.autoSuspendCandidates.isEmpty)
+    }
+
+    func testSessionAutoSuspendGroupsStayEmptyWhenScopeIsAgent() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let root = agent(pid: 9_093, cpu: 10)
+        let childA = snapshot(pid: 9_094, path: "/usr/bin/make", cpu: 50, parent: 9_093)
+        let childB = snapshot(pid: 9_095, path: "/usr/bin/make", cpu: 50, parent: 9_093)
+        let tree = [root, childA, childB]
+
+        _ = engine.ingest(tree, settings: settings, at: start)
+        let update = engine.ingest(tree, settings: settings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertEqual(update.hotSessions, [root.identity])
+        XCTAssertTrue(update.autoSuspendGroups.isEmpty)
+        XCTAssertTrue(update.autoSuspendCandidates.isEmpty)
+    }
+
+    func testSessionAutoSuspendSkipsUserResumedRoot() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let root = agent(pid: 9_096, cpu: 10)
+        let childA = snapshot(pid: 9_097, path: "/usr/bin/make", cpu: 50, parent: 9_096)
+        let childB = snapshot(pid: 9_098, path: "/usr/bin/make", cpu: 50, parent: 9_096)
+        let tree = [root, childA, childB]
+        var sessionSettings = settings
+        sessionSettings.autoSuspendScope = .session
+
+        engine.recordUserResume(root.identity)
+        _ = engine.ingest(tree, settings: sessionSettings, at: start)
+        let update = engine.ingest(tree, settings: sessionSettings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertEqual(update.hotSessions, [root.identity])
+        XCTAssertTrue(update.autoSuspendGroups.isEmpty)
+    }
+
+    func testSessionAutoSuspendOmitsProtectedMembers() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let root = agent(pid: 9_100, cpu: 10)
+        let child = snapshot(pid: 9_101, path: "/usr/bin/make", cpu: 50, parent: 9_100)
+        let protected = snapshot(pid: 9_102, path: "/usr/sbin/helper", cpu: 50, parent: 9_100)
+        let tree = [root, child, protected]
+        var sessionSettings = settings
+        sessionSettings.autoSuspendScope = .session
+
+        _ = engine.ingest(tree, settings: sessionSettings, at: start)
+        let update = engine.ingest(tree, settings: sessionSettings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertEqual(update.autoSuspendGroups.count, 1)
+        XCTAssertEqual(update.autoSuspendGroups.first?.members.map(\.id), [child.id])
+    }
+
+    func testSessionAutoSuspendSkipsSuspectedRoot() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let herdr = snapshot(pid: 9_110, path: "/opt/homebrew/opt/herdr/bin/herdr", parent: 1)
+        let shell = snapshot(pid: 9_111, path: "/bin/zsh", cpu: 1, parent: 9_110)
+        var node = snapshot(pid: 9_112, path: "/usr/local/bin/node", cpu: 10, parent: 9_111)
+        node.launchScript = "~/.npm/_npx/abc/node_modules/.bin/newagent"
+        let childA = snapshot(pid: 9_113, path: "/usr/bin/make", cpu: 50, parent: 9_112)
+        let childB = snapshot(pid: 9_114, path: "/usr/bin/make", cpu: 50, parent: 9_112)
+        let tree = [herdr, shell, node, childA, childB]
+        var sessionSettings = settings
+        sessionSettings.autoSuspendScope = .session
+
+        _ = engine.ingest(tree, settings: sessionSettings, at: start)
+        let update = engine.ingest(tree, settings: sessionSettings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertTrue(update.autoSuspendGroups.isEmpty)
+        XCTAssertFalse(update.sessions.contains { $0.rootPID == node.id })
+    }
+
+    func testSessionAutoSuspendGroupNeverIncludesAncestorOrSibling() {
+        var engine = MonitorEngine()
+        let start = ContinuousClock().now
+        let host = snapshot(pid: 9_200, path: "/opt/homebrew/opt/herdr/bin/herdr", parent: 1)
+        let sessionZsh = snapshot(pid: 9_201, path: "/bin/zsh", cpu: 1, parent: 9_200)
+        let root = agent(pid: 9_202, cpu: 10, parent: 9_201)
+        let childA = snapshot(pid: 9_203, path: "/usr/bin/yes", cpu: 50, parent: 9_202)
+        let childB = snapshot(pid: 9_204, path: "/usr/bin/yes", cpu: 50, parent: 9_202)
+        let siblingShell = snapshot(pid: 9_205, path: "/bin/zsh", cpu: 80, parent: 9_201)
+        let tree = [host, sessionZsh, root, childA, childB, siblingShell]
+        var sessionSettings = settings
+        sessionSettings.autoSuspendScope = .session
+
+        _ = engine.ingest(tree, settings: sessionSettings, at: start)
+        let update = engine.ingest(tree, settings: sessionSettings, at: start.advanced(by: .seconds(4)))
+
+        XCTAssertEqual(update.autoSuspendGroups.count, 1)
+        let memberIDs = Set(update.autoSuspendGroups.first?.members.map(\.id) ?? [])
+        XCTAssertEqual(memberIDs, [childA.id, childB.id])
+        XCTAssertFalse(memberIDs.contains(host.id))
+        XCTAssertFalse(memberIDs.contains(sessionZsh.id))
+        XCTAssertFalse(memberIDs.contains(siblingShell.id))
+        XCTAssertEqual(update.autoSuspendGroups.first?.root, root.identity)
+    }
+
+    func testSessionAutoSuspendDropsListedAncestorsAndSiblings() {
+        let host = snapshot(pid: 9_210, path: "/opt/homebrew/opt/herdr/bin/herdr", parent: 1)
+        let sessionZsh = snapshot(pid: 9_211, path: "/bin/zsh", cpu: 1, parent: 9_210)
+        let root = agent(pid: 9_212, cpu: 10, parent: 9_211)
+        let childA = snapshot(pid: 9_213, path: "/usr/bin/yes", cpu: 50, parent: 9_212)
+        let childB = snapshot(pid: 9_214, path: "/usr/bin/yes", cpu: 50, parent: 9_212)
+        let siblingShell = snapshot(pid: 9_215, path: "/bin/zsh", cpu: 80, parent: 9_211)
+        let byIdentity = Dictionary(
+            uniqueKeysWithValues: [host, sessionZsh, root, childA, childB, siblingShell].map { ($0.identity, $0) }
+        )
+        let session = AgentSession(
+            id: root.identity,
+            rootPID: root.id,
+            name: "claude",
+            kind: .agent,
+            workingDirectory: nil,
+            projectName: nil,
+            members: [
+                childA.identity, childB.identity,
+                host.identity, sessionZsh.identity, siblingShell.identity,
+            ],
+            memberCount: 5,
+            cpuPercent: 110,
+            residentBytes: 0,
+            isSuspended: false,
+            elapsed: "00:10"
+        )
+        let groups = MonitorEngine.autoSuspendGroups(
+            sessions: [session],
+            newlyHotSessions: [root.identity],
+            byIdentity: byIdentity,
+            userResumed: []
+        )
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(Set(groups.first?.members.map(\.id) ?? []), [childA.id, childB.id])
+    }
+
+    func testCorruptedAutoSuspendScopeDefaultsToAgent() {
+        let suiteName = "dev.justn.watchdog.scope-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set("not-a-scope", forKey: MonitorSettings.Keys.autoSuspendScope)
+        XCTAssertEqual(MonitorSettings(defaults: defaults).autoSuspendScope, .agent)
+        defaults.removePersistentDomain(forName: suiteName)
+    }
+
     func testSamplingFailureResetsEvidencePerSafetyContract() {
         var engine = MonitorEngine()
         let start = ContinuousClock().now
@@ -200,8 +361,14 @@ final class MonitorEngineTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func agent(pid: Int32, cpu: Double = 0, memoryGB: UInt64 = 0, state: String = "R") -> ProcessSnapshot {
-        snapshot(pid: pid, path: "/usr/local/bin/claude", cpu: cpu, memoryGB: memoryGB, state: state)
+    private func agent(
+        pid: Int32,
+        cpu: Double = 0,
+        memoryGB: UInt64 = 0,
+        state: String = "R",
+        parent: Int32 = 600
+    ) -> ProcessSnapshot {
+        snapshot(pid: pid, path: "/usr/local/bin/claude", cpu: cpu, memoryGB: memoryGB, state: state, parent: parent)
     }
 
     private func snapshot(
