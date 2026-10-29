@@ -200,6 +200,42 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
+    func testJournalSectionListsEntriesAndUndoStates() {
+        let app = launch(arguments: ["--ui-test-window-fixture"])
+        defer { app.terminate() }
+
+        let window = app.descendants(matching: .any)["watchdog.window"]
+        XCTAssertTrue(window.waitForExistence(timeout: 8))
+
+        let sidebar = app.descendants(matching: .any)["watchdog.sidebar.journal"]
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
+        sidebar.click()
+
+        let autoID = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAA1"
+        let cliID = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAA2"
+        let resumeID = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAA3"
+
+        let autoRow = app.descendants(matching: .any)["journal.\(autoID).row"]
+        let cliRow = app.descendants(matching: .any)["journal.\(cliID).row"]
+        let resumeRow = app.descendants(matching: .any)["journal.\(resumeID).row"]
+        XCTAssertTrue(autoRow.waitForExistence(timeout: 5))
+        XCTAssertTrue(cliRow.exists)
+        XCTAssertTrue(resumeRow.exists)
+
+        let autoUndo = app.descendants(matching: .any)["journal.\(autoID).undo"]
+        let cliUndo = app.descendants(matching: .any)["journal.\(cliID).undo"]
+        let resumeUndo = app.descendants(matching: .any)["journal.\(resumeID).undo"]
+        XCTAssertTrue(autoUndo.waitForExistence(timeout: 2))
+        XCTAssertTrue(autoUndo.isEnabled)
+        XCTAssertTrue(cliUndo.exists)
+        XCTAssertFalse(cliUndo.isEnabled)
+        XCTAssertTrue(resumeUndo.exists)
+        XCTAssertFalse(resumeUndo.isEnabled)
+
+        XCTAssertTrue(app.descendants(matching: .any)["watchdog.journal.export"].exists)
+    }
+
+    @MainActor
     func testPopoverHasOpenWindowButton() {
         let app = launch(arguments: ["--ui-test-fixture"])
         defer { app.terminate() }

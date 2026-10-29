@@ -94,6 +94,9 @@ final class ProcessMonitor: ObservableObject {
     /// Processes Watchdog itself stopped and that are still stopped.
     @Published private(set) var watchdogSuspended: [SuspensionRecord] = []
 
+    /// Newest first, capped for the window journal table.
+    @Published private(set) var journalEntries: [ActionJournalEntry] = []
+
     /// True while the menu is on screen. Rows then keep their positions across
     /// refreshes so a click can never land on a process that moved under the
     /// pointer; the list is fully re-sorted the next time the menu opens.
@@ -412,6 +415,39 @@ final class ProcessMonitor: ObservableObject {
 
     func resume(_ process: ProcessSnapshot) {
         performImmediate(.resume, process: process, success: "재개: \(process.displayName)")
+    }
+
+    func reloadJournal() {
+        journalEntries = journal.recent(limit: 200)
+    }
+
+    func undoTarget(for entry: ActionJournalEntry) -> ProcessSnapshot? {
+        guard entry.action == .suspend, entry.outcome == "suspended" else { return nil }
+        let identity = ProcessIdentity(
+            pid: entry.pid,
+            startTimeMicroseconds: entry.startTimeMicroseconds,
+            userID: entry.userID
+        )
+        // journalEntries is the loaded window; a resume is always newer than
+        // the suspend it undoes, so if the suspend is listed, so is the resume.
+        if journalEntries.contains(where: { $0.undoOf == entry.id }) { return nil }
+        guard watchdogSuspended.contains(where: { $0.identity == identity }) else { return nil }
+        guard let process = processes.first(where: { $0.identity == identity }) else { return nil }
+        guard actionability(of: process).canAct else { return nil }
+        return process
+    }
+
+    func undo(_ entry: ActionJournalEntry) {
+        if let process = undoTarget(for: entry) {
+            resume(process)
+        } else {
+            showFeedback(
+                .init(
+                    kind: .error,
+                    message: "되돌릴 수 없습니다: 이미 재개됐거나 종료된 프로세스입니다"
+                )
+            )
+        }
     }
 
     /// Whether a confirmation can still complete. The view dismisses a
@@ -743,6 +779,20 @@ final class ProcessMonitor: ObservableObject {
 
     var ledgerPreview: SuspensionLedger { ledger }
     var journalPreview: ActionJournal { journal }
+
+    func loadJournalDisplayPreview(
+        entries: [ActionJournalEntry],
+        suspended: [SuspensionRecord] = []
+    ) {
+        for entry in entries {
+            try? journal.append(entry)
+        }
+        for record in suspended {
+            try? ledger.record(record)
+        }
+        watchdogSuspended = ledger.all()
+        reloadJournal()
+    }
 
     func pruneActionOutcomesPreview(at instant: ContinuousClock.Instant) {
         pruneActionOutcomes(at: instant)
@@ -1081,6 +1131,7 @@ final class ProcessMonitor: ObservableObject {
         } catch {
             Self.log.error("ActionJournal update failed: \(error.localizedDescription, privacy: .public)")
         }
+        reloadJournal()
     }
 
     private func recordJournal(
@@ -1106,6 +1157,7 @@ final class ProcessMonitor: ObservableObject {
         } catch {
             Self.log.error("ActionJournal append failed: \(error.localizedDescription, privacy: .public)")
         }
+        reloadJournal()
     }
 
     private func recordActionOutcome(

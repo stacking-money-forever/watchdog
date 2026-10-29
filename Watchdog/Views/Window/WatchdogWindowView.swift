@@ -17,7 +17,12 @@ struct WatchdogWindowView: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 180, ideal: 200)
         } detail: {
-            WindowSectionPlaceholder(section: selectedSection)
+            switch selectedSection {
+            case .journal:
+                JournalView(monitor: monitor)
+            default:
+                WindowSectionPlaceholder(section: selectedSection)
+            }
         }
         .frame(minWidth: 680, minHeight: 420)
         .accessibilityElement(children: .contain)

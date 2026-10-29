@@ -378,12 +378,13 @@ struct WatchdogApp: App {
                 monitor = ProcessMonitor(
                     defaults: defaults,
                     sampler: WatchdogReorderFixtureSampler(processes: Self.fixtureProcesses),
-                    ledger: .inMemory()
+                    ledger: .inMemory(),
+                    journal: .inMemory()
                 )
                 break
             }
             #endif
-            monitor = ProcessMonitor(defaults: defaults, ledger: .inMemory())
+            monitor = ProcessMonitor(defaults: defaults, ledger: .inMemory(), journal: .inMemory())
         }
         let launchAtLogin = LaunchAtLoginController(defaults: loginDefaults, automaticallyRegister: false)
         var shouldShowFixtureWindow = false
@@ -407,6 +408,9 @@ struct WatchdogApp: App {
                 highMemoryProcesses: [Self.fixtureProcesses[0].identity],
                 updatedAt: Date()
             )
+            if usesWindowFixture {
+                Self.preloadWindowJournalFixture(into: monitor)
+            }
             if usesOutcomeFixture {
                 monitor.setActionOutcomePreview(.verificationFailed, for: Self.fixtureProcesses[0])
             } else if usesExitedFixture {
@@ -502,5 +506,66 @@ struct WatchdogApp: App {
             workingDirectory: "/tmp/watchdog-second"
         ),
     ]
+
+    private static func preloadWindowJournalFixture(into monitor: ProcessMonitor) {
+        let claude = fixtureProcesses[0]
+        let codex = fixtureProcesses[1]
+        let autoSuspend = ActionJournalEntry(
+            id: windowJournalAutoSuspendID,
+            at: Date(timeIntervalSinceNow: -180),
+            source: .auto,
+            action: .suspend,
+            pid: claude.id,
+            startTimeMicroseconds: claude.startTimeMicroseconds,
+            userID: claude.userID,
+            executablePath: claude.executablePath,
+            displayName: claude.displayName,
+            workingDirectory: claude.workingDirectory,
+            reason: "CPU 184% 지속 25초",
+            outcome: "suspended"
+        )
+        let cliSuspend = ActionJournalEntry(
+            id: windowJournalCLISuspendID,
+            at: Date(timeIntervalSinceNow: -90),
+            source: .cli,
+            action: .suspend,
+            pid: codex.id,
+            startTimeMicroseconds: codex.startTimeMicroseconds,
+            userID: codex.userID,
+            executablePath: codex.executablePath,
+            displayName: codex.displayName,
+            workingDirectory: codex.workingDirectory,
+            outcome: "suspended"
+        )
+        let appResume = ActionJournalEntry(
+            id: windowJournalAppResumeID,
+            at: Date(timeIntervalSinceNow: -30),
+            source: .app,
+            action: .resume,
+            pid: codex.id,
+            startTimeMicroseconds: codex.startTimeMicroseconds,
+            userID: codex.userID,
+            executablePath: codex.executablePath,
+            displayName: codex.displayName,
+            workingDirectory: codex.workingDirectory,
+            outcome: "resumed",
+            undoOf: cliSuspend.id
+        )
+        monitor.loadJournalDisplayPreview(
+            entries: [autoSuspend, cliSuspend, appResume],
+            suspended: [
+                SuspensionRecord(
+                    identity: claude.identity,
+                    executablePath: claude.executablePath,
+                    suspendedAt: Date(timeIntervalSinceNow: -180),
+                    source: .auto
+                ),
+            ]
+        )
+    }
+
+    static let windowJournalAutoSuspendID = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1")!
+    static let windowJournalCLISuspendID = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2")!
+    static let windowJournalAppResumeID = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3")!
     #endif
 }
