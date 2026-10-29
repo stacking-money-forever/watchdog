@@ -6,6 +6,8 @@ import SwiftUI
 @MainActor
 enum WatchdogWindowOpener {
     static var pendingOpen = false
+    static var pendingSection: WindowSection?
+    static let sectionDidChange = Notification.Name("WatchdogWindowSectionDidChange")
     static var openWindowAction: ((String) -> Void)? {
         didSet {
             guard pendingOpen, openWindowAction != nil else { return }
@@ -13,7 +15,15 @@ enum WatchdogWindowOpener {
         }
     }
 
-    static func openMainWindow() {
+    static func openMainWindow(section: WindowSection? = nil) {
+        if let section {
+            pendingSection = section
+            NotificationCenter.default.post(
+                name: sectionDidChange,
+                object: nil,
+                userInfo: ["section": section.rawValue]
+            )
+        }
         if openWindowAction == nil {
             pendingOpen = true
             NSApplication.shared.activate(ignoringOtherApps: true)

@@ -283,48 +283,6 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-private struct WatchdogMenuBarLabel: View {
-    let monitor: ProcessMonitor
-    @State private var alertCount = 0
-
-    var body: some View {
-        WatchdogMenuBarIcon(alertCount: alertCount)
-            .onReceive(monitor.$alertCount.removeDuplicates()) { alertCount = $0 }
-    }
-}
-
-private struct WatchdogMenuBarIcon: View {
-    let alertCount: Int
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 4, style: .continuous)
-                .strokeBorder(lineWidth: alertCount == 0 ? 1 : 1.4)
-
-            Image(systemName: "waveform.path.ecg")
-                .font(.system(size: 9, weight: .bold))
-                .frame(width: 14, height: 16)
-
-            if alertCount > 0 {
-                Circle()
-                    .fill(Color.orange)
-                    .frame(width: 6, height: 6)
-                    .overlay {
-                        Circle()
-                            .strokeBorder(Color(nsColor: .controlBackgroundColor), lineWidth: 1)
-                    }
-                    .offset(x: 3, y: -3)
-            }
-        }
-        .frame(width: 18, height: 16)
-        .symbolRenderingMode(.monochrome)
-        .accessibilityLabel("Watchdog")
-        .accessibilityValue(
-            alertCount == 0 ? "감시 중인 프로세스가 안정적입니다" : "\(alertCount)개 프로세스 주의 필요"
-        )
-    }
-}
-
 /// Hosted unit tests launch a second Watchdog app next to the installed
 /// instance; they must neither contend for the single-instance lock nor run
 /// the live sampling loop during tests.
@@ -338,7 +296,7 @@ struct WatchdogApp: App {
     @NSApplicationDelegateAdaptor(WatchdogAppDelegate.self) private var appDelegate
     // Owned but deliberately not observed: observing it re-evaluated the whole
     // scene on every published change. The panel observes it itself and the
-    // label listens to alertCount alone.
+    // label listens to menuBarIconState alone.
     @State private var monitor: ProcessMonitor
     @StateObject private var launchAtLogin: LaunchAtLoginController
     private let showsFixtureWindow: Bool
@@ -504,6 +462,25 @@ struct WatchdogApp: App {
             executablePath: "/usr/local/bin/codex",
             startTimeMicroseconds: 9_071_002,
             workingDirectory: "/tmp/watchdog-second"
+        ),
+        ProcessSnapshot(
+            id: 71_003,
+            parentPID: 71_001,
+            processGroupID: 71_001,
+            userID: getuid(),
+            tty: "ttys001",
+            cpuPercent: 8,
+            residentBytes: 32 * 1_024 * 1_024,
+            state: "R",
+            elapsed: "00:01:04",
+            executablePath: "/usr/bin/make",
+            startTimeMicroseconds: 9_071_003,
+            workingDirectory: "/tmp/watchdog-fixture",
+            agentAncestor: AgentAncestor(
+                pid: 71_001,
+                name: "claude",
+                workingDirectory: "/tmp/watchdog-fixture"
+            )
         ),
     ]
 

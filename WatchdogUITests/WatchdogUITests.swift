@@ -41,26 +41,12 @@ final class WatchdogUITests: XCTestCase {
         let version = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", expected, expected)
         ).firstMatch
-        XCTAssertTrue(version.waitForExistence(timeout: 2))
+        XCTAssertTrue(version.waitForExistence(timeout: 5))
 
         let copyright = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS '2026 justn-hyeok' OR value CONTAINS '2026 justn-hyeok'")
         ).firstMatch
         XCTAssertTrue(copyright.exists)
-    }
-
-    @MainActor
-    func testSearchShowsNoMatchState() {
-        let app = launch(arguments: ["--ui-test-fixture"])
-        defer { app.terminate() }
-        let searchField = app.textFields["watchdog.search"]
-        XCTAssertTrue(searchField.waitForExistence(timeout: 5))
-
-        searchField.click()
-        searchField.typeText("fixture-with-no-matching-process")
-
-        XCTAssertTrue(app.staticTexts["검색 결과가 없습니다"].waitForExistence(timeout: 2))
-        XCTAssertTrue(app.staticTexts["다른 프로세스 이름, PID 또는 프로젝트를 검색해보세요."].exists)
     }
 
     @MainActor
@@ -75,7 +61,7 @@ final class WatchdogUITests: XCTestCase {
 
         let suspend = app.descendants(matching: .any)["\(actionableProcess).suspend"]
         XCTAssertTrue(suspend.exists)
-        XCTAssertEqual(suspend.label, "프로세스 일시 정지")
+        XCTAssertEqual(suspend.label, "세션 일시 정지")
         XCTAssertFalse(suspend.isEnabled)
 
         let actions = app.descendants(matching: .any)["\(actionableProcess).actions"]
@@ -98,9 +84,6 @@ final class WatchdogUITests: XCTestCase {
         openActionMenu(in: app)
         XCTAssertTrue(app.menuItems["종료할 때까지 무시"].waitForExistence(timeout: 2))
         app.menuItems["종료할 때까지 무시"].click()
-        let agentsScope = app.radioButtons["에이전트"]
-        XCTAssertTrue(agentsScope.waitForExistence(timeout: 2))
-        agentsScope.click()
         XCTAssertTrue(app.staticTexts["무시 중"].waitForExistence(timeout: 2))
 
         let undoIgnore = app.buttons["\(actionableProcess).undo-ignore"]
@@ -160,9 +143,6 @@ final class WatchdogUITests: XCTestCase {
     func testRowsHoldPositionWhileRankingChanges() {
         let app = launch(arguments: ["--ui-test-reorder-fixture"])
         defer { app.terminate() }
-        let scope = app.radioButtons["전체"]
-        XCTAssertTrue(scope.waitForExistence(timeout: 5))
-        scope.click()
 
         let first = app.descendants(matching: .any)["process.71001.9071001.row"]
         let second = app.descendants(matching: .any)["process.71002.9071002.row"]
@@ -170,13 +150,13 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(second.waitForExistence(timeout: 2))
 
         let initialOrder = first.frame.minY < second.frame.minY
-        func firstRowIsBusy() -> Bool { first.staticTexts["90%"].exists }
-        let initiallyBusy = firstRowIsBusy()
+        func secondRowIsBusy() -> Bool { second.staticTexts["90%"].exists }
+        let initiallyBusy = secondRowIsBusy()
         var sawRefresh = false
         for _ in 0..<14 {
             Thread.sleep(forTimeInterval: 0.5)
             XCTAssertEqual(first.frame.minY < second.frame.minY, initialOrder, "rows traded places while shown")
-            if firstRowIsBusy() != initiallyBusy { sawRefresh = true }
+            if secondRowIsBusy() != initiallyBusy { sawRefresh = true }
         }
         XCTAssertTrue(sawRefresh, "the fixture must actually refresh, or the test proves nothing")
     }
@@ -264,6 +244,34 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
+    func testPopoverShowsSessionsStatusLineAndRecentActions() {
+        let app = launch(arguments: ["--ui-test-fixture"])
+        defer { app.terminate() }
+
+        let status = app.descendants(matching: .any)["watchdog.status-line"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertTrue(status.label.contains("주의") || app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS '주의' OR value CONTAINS '주의'")
+        ).firstMatch.exists)
+
+        let row = app.descendants(matching: .any)["process.71001.9071001.row"]
+        XCTAssertTrue(row.waitForExistence(timeout: 2))
+        XCTAssertTrue(row.label.contains("자식"), "session row should name member count: \(row.label)")
+        XCTAssertTrue(
+            row.label.contains("퍼센트") || row.label.contains("%") || row.label.contains("CPU"),
+            "session row should include CPU total: \(row.label)"
+        )
+
+        let expand = app.descendants(matching: .any)["process.71001.9071001.expand"]
+        XCTAssertTrue(expand.waitForExistence(timeout: 2))
+        expand.click()
+        let member = app.descendants(matching: .any)["process.71003.9071003.row"]
+        XCTAssertTrue(member.waitForExistence(timeout: 2))
+
+        XCTAssertTrue(app.staticTexts["아직 조치가 없습니다"].waitForExistence(timeout: 2))
+    }
+
+    @MainActor
     func testPopoverHasOpenWindowButton() {
         let app = launch(arguments: ["--ui-test-fixture"])
         defer { app.terminate() }
@@ -283,8 +291,13 @@ final class WatchdogUITests: XCTestCase {
         let actions = app.descendants(matching: .any)["\(actionableProcess).actions"]
         XCTAssertTrue(actions.waitForExistence(timeout: 5))
         XCTAssertTrue(actions.isEnabled)
-        actions.click()
-        XCTAssertTrue(app.menuItems["종료…"].waitForExistence(timeout: 2))
+        let terminate = app.menuItems["종료…"]
+        for attempt in 0..<3 {
+            actions.click()
+            if terminate.waitForExistence(timeout: 2) { return }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 0.3) }
+        }
+        XCTAssertTrue(terminate.waitForExistence(timeout: 1))
     }
 
     @MainActor

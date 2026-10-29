@@ -32,8 +32,22 @@ struct WatchdogWindowView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("watchdog.window")
         .onAppear {
+            applyPendingSection()
             WatchdogWindowOpener.bringMainWindowForward()
         }
+        .onReceive(NotificationCenter.default.publisher(for: WatchdogWindowOpener.sectionDidChange)) { notification in
+            if let raw = notification.userInfo?["section"] as? String,
+               let section = WindowSection(rawValue: raw) {
+                selectedSection = section
+                WatchdogWindowOpener.pendingSection = nil
+            }
+        }
+    }
+
+    private func applyPendingSection() {
+        guard let section = WatchdogWindowOpener.pendingSection else { return }
+        selectedSection = section
+        WatchdogWindowOpener.pendingSection = nil
     }
 }
 

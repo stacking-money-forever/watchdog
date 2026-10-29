@@ -46,6 +46,40 @@ final class ProcessMonitorTests: XCTestCase {
         )
     }
 
+    func testVisibleSessionsRanksAttentionFirstAndFillsFromAggregator() {
+        let monitor = makeMonitor()
+        let quiet = snapshot(pid: 3_010, name: "/usr/local/bin/codex", cpu: 90)
+        var hot = snapshot(pid: 3_001, name: "/usr/local/bin/claude", cpu: 12)
+        hot.orphanReason = .detachedSession
+        var child = snapshot(pid: 3_002, name: "/usr/bin/make", cpu: 5, startTime: 3_002_000_000)
+        child.agentAncestor = AgentAncestor(pid: 3_001, name: "claude", workingDirectory: "/tmp/a")
+        monitor.loadActionablePreview(
+            processes: [quiet, hot, child],
+            hotProcesses: [hot.identity],
+            updatedAt: Date()
+        )
+
+        let visible = monitor.visibleSessions(limit: 8)
+        XCTAssertEqual(visible.map(\.rootPID), [3_001, 3_010])
+        XCTAssertTrue(monitor.hotSessions.contains(hot.identity))
+        XCTAssertEqual(monitor.members(of: visible[0]).map(\.id), [3_002])
+        XCTAssertTrue(monitor.sessionAlertReasons(visible[0]).contains { reason in
+            if case .sustainedCPU = reason { return true }
+            return false
+        })
+    }
+
+    func testOrphansExcludeSessionRootsAndKeepOldestFirst() {
+        let monitor = makeMonitor()
+        var root = snapshot(pid: 4_001, name: "/usr/local/bin/claude", startTime: 100)
+        root.orphanReason = .detachedSession
+        var leftover = snapshot(pid: 4_002, name: "/usr/bin/python3", startTime: 50)
+        leftover.orphanReason = .temporaryLaunchPath
+        monitor.loadPreview(processes: [root, leftover], hotProcesses: [], updatedAt: Date())
+
+        XCTAssertEqual(monitor.orphans(limit: 3).map(\.id), [4_002])
+    }
+
     func testAlertCountExcludesOrphanOnlyProcess() {
         let monitor = makeMonitor()
         var process = snapshot(pid: 2_001, name: "/usr/local/bin/gjc")

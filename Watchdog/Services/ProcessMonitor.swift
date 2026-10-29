@@ -38,6 +38,12 @@ private struct NotificationCooldownKey: Hashable {
 @MainActor
 final class ProcessMonitor: ObservableObject {
     @Published private(set) var processes: [ProcessSnapshot] = []
+    @Published private(set) var sessions: [AgentSession] = []
+    @Published private(set) var hotSessions: Set<ProcessIdentity> = []
+    @Published private(set) var highMemorySessions: Set<ProcessIdentity> = []
+    /// Written only when the icon state actually changes, so the menu bar
+    /// label can observe this alone instead of the whole monitor.
+    @Published private(set) var menuBarIconState: MenuBarIconState = .normal
     @Published private(set) var hotProcesses: Set<ProcessIdentity> = [] {
         didSet { updateAlertCount() }
     }
@@ -104,7 +110,9 @@ final class ProcessMonitor: ObservableObject {
         didSet {
             if !isPresented, oldValue {
                 processes = MonitorEngine.displayOrder(processes)
+                sessions = rankedSessions(sessions)
             } else if isPresented, !oldValue {
+                sessions = rankedSessions(sessions)
                 // Worktree state is display-only and skipped while closed.
                 let snapshots = processes
                 Task { [weak self] in await self?.resolveWorktreeStates(snapshots: snapshots) }
@@ -179,6 +187,7 @@ final class ProcessMonitor: ObservableObject {
     private func updateAlertCount() {
         let count = hotProcesses.union(highMemoryProcesses).count
         if count != alertCount { alertCount = count }
+        updateMenuBarState()
     }
 
 
@@ -262,6 +271,13 @@ final class ProcessMonitor: ObservableObject {
             : update.processes
         if hotProcesses != update.hot { hotProcesses = update.hot }
         if highMemoryProcesses != update.highMemory { highMemoryProcesses = update.highMemory }
+        if hotSessions != update.hotSessions { hotSessions = update.hotSessions }
+        if highMemorySessions != update.highMemorySessions {
+            highMemorySessions = update.highMemorySessions
+        }
+        sessions = isPresented
+            ? Self.positionStable(update.sessions, previous: sessions)
+            : rankedSessions(update.sessions)
         if let systemCPUPercent = sample.systemCPUPercent, systemCPUPercent != self.systemCPUPercent {
             self.systemCPUPercent = systemCPUPercent
         }
@@ -269,6 +285,7 @@ final class ProcessMonitor: ObservableObject {
         lastUpdated = Date()
         if samplingError != nil { samplingError = nil }
         refreshWatchdogSuspended(liveProcesses: update.processes)
+        updateMenuBarState()
 
         if notificationsEnabled, notificationAuthorization != .denied {
             prunePendingNotifications(
@@ -303,6 +320,26 @@ final class ProcessMonitor: ObservableObject {
         return result
     }
 
+    static func positionStable(
+        _ next: [AgentSession],
+        previous: [AgentSession]
+    ) -> [AgentSession] {
+        guard !previous.isEmpty else { return next }
+        let byIdentity = Dictionary(next.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen: Set<ProcessIdentity> = []
+        var result: [AgentSession] = []
+        result.reserveCapacity(next.count)
+        for old in previous {
+            if let updated = byIdentity[old.id], seen.insert(old.id).inserted {
+                result.append(updated)
+            }
+        }
+        for session in next where seen.insert(session.id).inserted {
+            result.append(session)
+        }
+        return result
+    }
+
     /// Re-reads notification permission without prompting; used when the
     /// menu opens so a change made in System Settings shows immediately.
     func refreshNotificationAuthorization() {
@@ -319,6 +356,9 @@ final class ProcessMonitor: ObservableObject {
         engine.samplingFailed()
         hotProcesses.removeAll()
         highMemoryProcesses.removeAll()
+        hotSessions.removeAll()
+        highMemorySessions.removeAll()
+        updateMenuBarState()
         pendingCPUNotifications.removeAll(keepingCapacity: true)
         pendingMemoryNotifications.removeAll(keepingCapacity: true)
         pendingConfirmations.removeAll(keepingCapacity: true)
@@ -360,6 +400,111 @@ final class ProcessMonitor: ObservableObject {
         }
 
         return scope == .all ? Array(filtered.prefix(60)) : filtered
+    }
+
+    func visibleSessions(limit: Int) -> [AgentSession] {
+        let ordered = isPresented ? sessions : rankedSessions(sessions)
+        return Array(ordered.prefix(max(0, limit)))
+    }
+
+    func sessionAlertReasons(_ session: AgentSession) -> [AlertReason] {
+        guard let root = rootProcess(of: session), !isIgnored(root) else { return [] }
+        var reasons: [AlertReason] = []
+        if hotSessions.contains(session.id) {
+            reasons.append(.sustainedCPU(percent: threshold))
+        }
+        if highMemorySessions.contains(session.id) {
+            reasons.append(.sustainedMemory(bytes: settings.memoryThresholdBytes))
+        }
+        for reason in alertReasons(for: root) where !reasons.contains(reason) {
+            reasons.append(reason)
+        }
+        return reasons
+    }
+
+    func members(of session: AgentSession) -> [ProcessSnapshot] {
+        let byIdentity = Dictionary(
+            processes.map { ($0.identity, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return session.members.compactMap { byIdentity[$0] }
+    }
+
+    func rootProcess(of session: AgentSession) -> ProcessSnapshot? {
+        processes.first { $0.identity == session.id }
+    }
+
+    func orphans(limit: Int) -> [ProcessSnapshot] {
+        let roots = Set(sessions.map(\.id))
+        let matched = processes.filter { $0.suspectedOrphan && !roots.contains($0.identity) }
+        let sorted = matched.sorted {
+            if $0.startTimeMicroseconds != $1.startTimeMicroseconds {
+                return $0.startTimeMicroseconds < $1.startTimeMicroseconds
+            }
+            return $0.id < $1.id
+        }
+        return Array(sorted.prefix(max(0, limit)))
+    }
+
+    func sessionHasWarning(_ session: AgentSession) -> Bool {
+        if engine.ignored.contains(session.id) { return false }
+        if let root = rootProcess(of: session), isIgnored(root) { return false }
+        if hotSessions.contains(session.id) || highMemorySessions.contains(session.id) {
+            return true
+        }
+        if let root = rootProcess(of: session), root.suspectedOrphan { return true }
+        return false
+    }
+
+    func sessionNeedsAttention(_ session: AgentSession) -> Bool {
+        if sessionHasWarning(session) { return true }
+        if let root = rootProcess(of: session), isSuspendedByWatchdog(root) { return true }
+        return false
+    }
+
+    private func rankedSessions(_ sessions: [AgentSession]) -> [AgentSession] {
+        sessions.sorted { left, right in
+            let leftAlert = sessionNeedsAttention(left)
+            let rightAlert = sessionNeedsAttention(right)
+            if leftAlert != rightAlert { return leftAlert }
+            let leftCPU = left.cpuPercent.isFinite ? left.cpuPercent : 0
+            let rightCPU = right.cpuPercent.isFinite ? right.cpuPercent : 0
+            if leftCPU != rightCPU { return leftCPU > rightCPU }
+            return left.rootPID < right.rootPID
+        }
+    }
+
+    private func attentionItemCount() -> Int {
+        var identities: Set<ProcessIdentity> = []
+        for session in sessions where sessionHasWarning(session) {
+            identities.insert(session.id)
+        }
+        let sessionIdentities = Set(sessions.map(\.id))
+        let memberIdentities = Set(sessions.flatMap(\.members))
+        for process in processes where process.suspectedOrphan && !isIgnored(process) {
+            if sessionIdentities.contains(process.identity) || memberIdentities.contains(process.identity) {
+                continue
+            }
+            identities.insert(process.identity)
+        }
+        return identities.count
+    }
+
+    private func updateMenuBarState() {
+        let isStale: Bool
+        if samplingError != nil {
+            isStale = true
+        } else if let observation {
+            isStale = observation.instant.duration(to: clock.now) >= .seconds(5)
+        } else {
+            isStale = false
+        }
+        let next = MenuBarIconState.resolve(
+            attentionCount: attentionItemCount(),
+            suspendedCount: watchdogSuspended.count,
+            isStale: isStale
+        )
+        if next != menuBarIconState { menuBarIconState = next }
     }
 
     func isHot(_ process: ProcessSnapshot) -> Bool {
@@ -527,6 +672,9 @@ final class ProcessMonitor: ObservableObject {
         case .ignored:
             hotProcesses = engine.hot
             highMemoryProcesses = engine.highMemory
+            hotSessions.remove(process.identity)
+            highMemorySessions.remove(process.identity)
+            updateMenuBarState()
             showFeedback(.init(kind: .success, message: "이 프로세스는 종료할 때까지 무시합니다"))
         }
     }
@@ -560,6 +708,11 @@ final class ProcessMonitor: ObservableObject {
         guard engine.undoIgnore(process.identity) else { return }
         hotProcesses = engine.hot
         highMemoryProcesses = engine.highMemory
+        if sessions.contains(where: { $0.id == process.identity }) {
+            if engine.hot.contains(process.identity) { hotSessions.insert(process.identity) }
+            if engine.highMemory.contains(process.identity) { highMemorySessions.insert(process.identity) }
+        }
+        updateMenuBarState()
         showFeedback(.init(kind: .success, message: "이 프로세스를 다시 감시합니다"))
     }
 
@@ -727,6 +880,11 @@ final class ProcessMonitor: ObservableObject {
         engine.loadPreview(hot: hotProcesses, highMemory: highMemoryProcesses)
         self.hotProcesses = engine.hot
         self.highMemoryProcesses = engine.highMemory
+        let aggregated = SessionAggregator.sessions(from: processes)
+        self.hotSessions = Self.sessionRoots(matching: hotProcesses, in: aggregated)
+        self.highMemorySessions = Self.sessionRoots(matching: highMemoryProcesses, in: aggregated)
+        self.sessions = rankedSessions(aggregated)
+        updateMenuBarState()
         systemCPUPercent = 37
         systemMemory = SystemMemorySnapshot(
             totalBytes: 48 * 1_024 * 1_024 * 1_024,
@@ -792,6 +950,24 @@ final class ProcessMonitor: ObservableObject {
         }
         watchdogSuspended = ledger.all()
         reloadJournal()
+        updateMenuBarState()
+    }
+
+    private static func sessionRoots(
+        matching identities: Set<ProcessIdentity>,
+        in sessions: [AgentSession]
+    ) -> Set<ProcessIdentity> {
+        var roots: Set<ProcessIdentity> = []
+        for session in sessions {
+            if identities.contains(session.id) {
+                roots.insert(session.id)
+                continue
+            }
+            if session.members.contains(where: { identities.contains($0) }) {
+                roots.insert(session.id)
+            }
+        }
+        return roots
     }
 
     func pruneActionOutcomesPreview(at instant: ContinuousClock.Instant) {

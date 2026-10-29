@@ -52,9 +52,6 @@ struct WatchdogMenuView: View {
     @ObservedObject var monitor: ProcessMonitor
     @ObservedObject private var launchAtLogin: LaunchAtLoginController
     @Environment(\.dismiss) private var dismiss
-    @State private var scope: ProcessScope = .attention
-    @State private var search = ""
-    @State private var showsRules = false
     @State private var pendingAction: PendingProcessAction?
     @State private var menuActionFeedback: MenuActionFeedback?
     @State private var localActionFailures: [ProcessIdentity: LocalActionFailure] = [:]
@@ -65,13 +62,13 @@ struct WatchdogMenuView: View {
     /// (a pending confirmation included) is kept.
     @State private var isShown = false
 
+    private let sessionLimit = 8
+    private let orphanLimit = 3
+    private let recentLimit = 3
+
     init(monitor: ProcessMonitor, launchAtLogin: LaunchAtLoginController) {
         self.monitor = monitor
         self._launchAtLogin = ObservedObject(wrappedValue: launchAtLogin)
-    }
-
-    private var visibleProcesses: [ProcessSnapshot] {
-        monitor.visibleProcesses(scope: scope, search: search)
     }
 
     var body: some View {
@@ -80,8 +77,9 @@ struct WatchdogMenuView: View {
                 VStack(spacing: 0) {
                     header
                     Divider()
-                    controls
-                    processList
+                    statusLine
+                    Divider()
+                    content
                     Divider()
                     footer
                 }
@@ -95,13 +93,9 @@ struct WatchdogMenuView: View {
                 Color.clear
             }
         }
-        // A pending confirmation must survive the popup closing (focus loss);
-        // it is only cancelled explicitly or when its 30 s validity expires.
         .onReceive(monitor.$processes) { _ in
             dismissConfirmationIfInvalid()
         }
-        // A failed sample clears pending confirmations without publishing
-        // processes, and no sample may arrive before the 30 s validity ends.
         .onReceive(monitor.$samplingError) { _ in
             dismissConfirmationIfInvalid()
         }
@@ -122,8 +116,6 @@ struct WatchdogMenuView: View {
         }
     }
 
-    /// A confirmation whose window expired or whose process is gone can only
-    /// fail; close it and say why instead of leaving the list disabled.
     private func dismissConfirmationIfInvalid() {
         guard let pending = pendingAction,
               !monitor.isConfirmationValid(pending.confirmationRequest)
@@ -136,7 +128,6 @@ struct WatchdogMenuView: View {
             : ProcessControlError.processChanged.localizedDescription
         showMenuFeedback(.init(isError: true, message: message))
     }
-
 
     private func destructiveConfirmation(for action: PendingProcessAction) -> some View {
         ZStack {
@@ -182,94 +173,94 @@ struct WatchdogMenuView: View {
     }
 
     private var header: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Watchdog")
-                        .font(.system(size: 16, weight: .bold, design: .rounded))
-                        .accessibilityIdentifier("watchdog.header")
-                    Text(statusText)
-                        .font(.caption)
-                        .foregroundStyle(statusColor)
-                }
+        HStack(alignment: .firstTextBaseline) {
+            Text("Watchdog")
+                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .accessibilityIdentifier("watchdog.header")
 
-                Spacer()
+            Spacer()
 
-                Text("CPU \(Int(monitor.systemCPUPercent.rounded()))%")
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(gaugeColor)
-                    .accessibilityLabel("시스템 CPU 사용률")
-                    .accessibilityValue("\(Int(monitor.systemCPUPercent.rounded()))%")
+            Text("CPU \(Int(monitor.systemCPUPercent.rounded()))%")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(gaugeColor)
+                .accessibilityLabel("시스템 CPU 사용률")
+                .accessibilityValue("\(Int(monitor.systemCPUPercent.rounded()))%")
 
-                Text(memorySummary)
-                    .font(.system(size: 12, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(memoryPressureColor)
-                    .accessibilityLabel("시스템 메모리 사용률")
-                    .accessibilityValue(memorySummary)
+            Text(memorySummary)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(memoryPressureColor)
+                .accessibilityLabel("시스템 메모리 사용률")
+                .accessibilityValue(memorySummary)
+
+            Button {
+                openWindow()
+            } label: {
+                Image(systemName: "macwindow")
             }
+            .buttonStyle(.plain)
+            .help("창 열기")
+            .accessibilityLabel("창 열기")
+            .accessibilityIdentifier("watchdog.open-window")
+            .keyboardShortcut("o", modifiers: .command)
         }
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 8)
     }
 
-    private var controls: some View {
-        VStack(spacing: 10) {
-            Picker("범위", selection: $scope) {
-                ForEach(ProcessScope.allCases) { scope in
-                    Text(scope.rawValue).tag(scope)
-                }
-            }
-            .pickerStyle(.segmented)
+    private var isObservationStale: Bool {
+        if monitor.samplingError != nil { return true }
+        if let first = monitor.processes.first {
+            let freshness = monitor.actionability(of: first).freshness
+            return freshness != .current
+        }
+        return false
+    }
 
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                TextField("프로세스, PID 또는 프로젝트 검색", text: $search)
-                    .textFieldStyle(.plain)
-                    .accessibilityIdentifier("watchdog.search")
+    private var statusLine: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if isObservationStale {
+                Text("관찰 정보가 오래되어 새로고침 후 제어할 수 있습니다")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                Spacer(minLength: 8)
+                refreshButton
+            } else {
+                Text(statusLineText)
+                    .font(.caption)
+                    .foregroundStyle(statusLineColor)
+                Spacer(minLength: 8)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 9))
-
-            DisclosureGroup("감지 규칙", isExpanded: $showsRules) {
-                VStack(spacing: 10) {
-                    DetectionRulesControls(monitor: monitor)
-                    NotificationAndLoginControls(monitor: monitor, launchAtLogin: launchAtLogin)
-                }
-                .font(.caption)
-                .padding(.top, 8)
-            }
-            .font(.caption.weight(.semibold))
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("watchdog.status-line")
     }
 
-    /// At most one transient message: an explicit menu action wins over a
-    /// background one.
-    private var currentFeedback: (message: String, isError: Bool)? {
-        if let feedback = menuActionFeedback { return (feedback.message, feedback.isError) }
-        if let feedback = monitor.actionFeedback { return (feedback.message, feedback.kind == .error) }
-        return nil
+    private var statusLineText: String {
+        let warningCount = monitor.sessions.filter { monitor.sessionHasWarning($0) }.count
+        let stoppedCount = monitor.watchdogSuspended.count
+        if warningCount == 0 && stoppedCount == 0 {
+            if monitor.sessions.isEmpty {
+                return "실행 중인 코딩 에이전트가 없습니다"
+            }
+            return "문제 없음 · 세션 \(monitor.sessions.count)개 감시 중"
+        }
+        return "⚠ 주의 \(warningCount) · ⏸ 멈춤 \(stoppedCount)"
     }
 
-    /// Rows show their own outcome, so the banner only summarizes failures,
-    /// one line at most, so stacked banners can never squeeze the list away.
-    private var outcomeBanner: (text: String, isError: Bool)? {
-        let failures = outcomeSummaries.filter(\.isError)
-        guard let first = failures.first else { return nil }
-        let extra = failures.count > 1 ? " 외 \(failures.count - 1)건" : ""
-        return (first.text + extra, true)
+    private var statusLineColor: Color {
+        let warningCount = monitor.sessions.filter { monitor.sessionHasWarning($0) }.count
+        if warningCount > 0 || !monitor.watchdogSuspended.isEmpty { return .orange }
+        return .secondary
     }
 
-    private var processList: some View {
-        let visible = visibleProcesses
-        return VStack(spacing: 8) {
+    private var content: some View {
+        VStack(spacing: 8) {
             if let feedback = currentFeedback {
                 feedbackBanner(feedback.message, isError: feedback.isError)
                     .padding(.horizontal, 12)
@@ -295,37 +286,17 @@ struct WatchdogMenuView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(samplingError)
                 )
-            } else if visible.isEmpty {
-                ContentUnavailableView(
-                    emptyTitle,
-                    systemImage: scope == .attention ? "checkmark.shield" : "magnifyingglass",
-                    description: Text(emptyDescription)
-                )
+            } else if monitor.lastUpdated == nil && monitor.processes.isEmpty {
+                Text("샘플링 중…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 7) {
-                        // Keyed by full identity, not PID: a reused PID is a
-                        // different row and never inherits another's controls.
-                        ForEach(visible, id: \.identity) { process in
-                            ProcessRow(
-                                process: process,
-                                actionability: monitor.actionability(of: process),
-                                alertReasons: monitor.alertReasons(for: process),
-                                isIgnored: monitor.isIgnored(process),
-                                isSuspendedByWatchdog: monitor.isSuspendedByWatchdog(process),
-                                actionOutcome: actionOutcome(for: process),
-                                onSuspend: { monitor.suspend(process) },
-                                onResume: { monitor.resume(process) },
-                                onTerminate: {
-                                    prepareDestructiveAction(.terminate, process: process, kind: .terminate)
-                                },
-                                onForceQuit: {
-                                    prepareDestructiveAction(.forceQuit, process: process, kind: .forceQuit)
-                                },
-                                onIgnore: { monitor.ignoreUntilExit(process) },
-                                onUndoIgnore: { monitor.undoIgnore(process) }
-                            )
-                        }
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        sessionSection
+                        orphanSection
+                        recentActionsSection
                     }
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
@@ -336,42 +307,185 @@ struct WatchdogMenuView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private var sessionSection: some View {
+        let visible = monitor.visibleSessions(limit: sessionLimit)
+        let remaining = max(0, monitor.sessions.count - visible.count)
+        return VStack(alignment: .leading, spacing: 7) {
+            Text("세션")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            if monitor.sessions.isEmpty {
+                Text("실행 중인 코딩 에이전트가 없습니다")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 8)
+                Button("창 열기") { openWindow() }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
+            } else {
+                ForEach(visible, id: \.id) { session in
+                    sessionRow(for: session)
+                }
+                if remaining > 0 {
+                    Button("창에서 \(remaining)개 더 보기") {
+                        openWindow(section: .sessions)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
+                    .accessibilityIdentifier("watchdog.sessions.more")
+                }
+            }
+        }
+    }
+
+    private var orphanSection: some View {
+        let orphans = monitor.orphans(limit: orphanLimit)
+        return Group {
+            if !orphans.isEmpty {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("고아 \(orphans.count)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    ForEach(orphans, id: \.identity) { process in
+                        processRow(for: process, compact: false)
+                    }
+                    Button("창에서 보기") {
+                        openWindow(section: .processes)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
+                    .accessibilityIdentifier("watchdog.orphans.show-in-window")
+                }
+            }
+        }
+    }
+
+    private var recentActionsSection: some View {
+        let entries = Array(monitor.journalEntries.prefix(recentLimit))
+        return VStack(alignment: .leading, spacing: 7) {
+            Text("최근 조치")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            if entries.isEmpty {
+                Text("아직 조치가 없습니다")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+                    .accessibilityIdentifier("watchdog.recent.empty")
+            } else {
+                ForEach(entries) { entry in
+                    recentActionRow(entry)
+                }
+            }
+        }
+    }
+
+    private func recentActionRow(_ entry: ActionJournalEntry) -> some View {
+        let undoTarget = monitor.undoTarget(for: entry)
+        return HStack(spacing: 8) {
+            Image(systemName: recentActionSymbol(entry.action))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(recentActionTitle(entry))
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Text("\(JournalPresentation.sourceLabel(entry.source)) · \(relativeTime(entry.at))")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            Button("되돌리기") {
+                monitor.undo(entry)
+            }
+            .buttonStyle(.plain)
+            .font(.caption.weight(.semibold))
+            .disabled(undoTarget == nil || isObservationStale)
+            .help(undoTarget == nil ? "이미 종료됨" : "되돌리기")
+            .accessibilityLabel("되돌리기")
+            .accessibilityIdentifier("watchdog.recent.\(entry.id.uuidString).undo")
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("watchdog.recent.\(entry.id.uuidString).row")
+    }
+
+    private func sessionRow(for session: AgentSession) -> some View {
+        let root = monitor.rootProcess(of: session)
+        return Group {
+            if let root {
+                SessionRow(
+                    session: session,
+                    root: root,
+                    members: monitor.members(of: session),
+                    actionability: monitor.actionability(of: root),
+                    alertReasons: monitor.sessionAlertReasons(session),
+                    isIgnored: monitor.isIgnored(root),
+                    isSuspendedByWatchdog: monitor.isSuspendedByWatchdog(root),
+                    actionOutcome: actionOutcome(for: root),
+                    onSuspend: { monitor.suspend(root) },
+                    onResume: { monitor.resume(root) },
+                    onTerminate: {
+                        prepareDestructiveAction(.terminate, process: root, kind: .terminate)
+                    },
+                    onForceQuit: {
+                        prepareDestructiveAction(.forceQuit, process: root, kind: .forceQuit)
+                    },
+                    onIgnore: { monitor.ignoreUntilExit(root) },
+                    onUndoIgnore: { monitor.undoIgnore(root) },
+                    memberRow: { member in
+                        processRow(for: member, compact: true)
+                    },
+                    onShowInWindow: { openWindow(section: .sessions) }
+                )
+            }
+        }
+    }
+
+    private func processRow(for process: ProcessSnapshot, compact: Bool) -> ProcessRow {
+        ProcessRow(
+            process: process,
+            actionability: monitor.actionability(of: process),
+            alertReasons: monitor.alertReasons(for: process),
+            isIgnored: monitor.isIgnored(process),
+            isSuspendedByWatchdog: monitor.isSuspendedByWatchdog(process),
+            actionOutcome: actionOutcome(for: process),
+            onSuspend: { monitor.suspend(process) },
+            onResume: { monitor.resume(process) },
+            onTerminate: {
+                prepareDestructiveAction(.terminate, process: process, kind: .terminate)
+            },
+            onForceQuit: {
+                prepareDestructiveAction(.forceQuit, process: process, kind: .forceQuit)
+            },
+            onIgnore: { monitor.ignoreUntilExit(process) },
+            onUndoIgnore: { monitor.undoIgnore(process) },
+            compact: compact
+        )
+    }
+
     private var footer: some View {
         HStack {
-            if let lastUpdated = monitor.lastUpdated {
-                Text(observationText(lastUpdated))
-            } else {
-                Text("프로세스 확인 중…")
-            }
-
-            Spacer()
-
-            Button {
-                dismiss()
-                WatchdogWindowOpener.openMainWindow()
-            } label: {
-                Image(systemName: "macwindow")
+            Button("창 열기") {
+                openWindow()
             }
             .buttonStyle(.plain)
             .help("창 열기")
             .accessibilityLabel("창 열기")
-            .accessibilityIdentifier("watchdog.open-window")
-            .keyboardShortcut("o", modifiers: .command)
 
-            Button {
-                Task { await monitor.refreshNow() }
-            } label: {
-                if monitor.isRefreshing {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.clockwise")
-                }
+            Button("설정") {
+                openWindow(section: .settings)
             }
             .buttonStyle(.plain)
-            .disabled(monitor.isRefreshing)
-            .help("지금 새로고침")
-            .accessibilityLabel("지금 새로고침")
+            .accessibilityIdentifier("watchdog.open-settings")
+            .keyboardShortcut(",", modifiers: .command)
+
+            Spacer()
+
+            refreshButton
 
             Button {
                 NSApplication.shared.orderFrontStandardAboutPanel(nil)
@@ -396,37 +510,40 @@ struct WatchdogMenuView: View {
         .padding(.vertical, 10)
     }
 
-    private var statusText: String {
-        if monitor.alertCount == 0 { return "감시 중인 프로세스가 안정적입니다" }
-        return "\(monitor.alertCount)개 프로세스를 확인해야 합니다"
+    private var refreshButton: some View {
+        Button {
+            Task { await monitor.refreshNow() }
+        } label: {
+            if monitor.isRefreshing {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "arrow.clockwise")
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(monitor.isRefreshing)
+        .help("지금 새로고침")
+        .accessibilityLabel("지금 새로고침")
     }
 
-    private var statusColor: Color {
-        monitor.alertCount == 0 ? .secondary : .orange
+    private var currentFeedback: (message: String, isError: Bool)? {
+        if let feedback = menuActionFeedback { return (feedback.message, feedback.isError) }
+        if let feedback = monitor.actionFeedback { return (feedback.message, feedback.kind == .error) }
+        return nil
+    }
+
+    private var outcomeBanner: (text: String, isError: Bool)? {
+        let failures = outcomeSummaries.filter(\.isError)
+        guard let first = failures.first else { return nil }
+        let extra = failures.count > 1 ? " 외 \(failures.count - 1)건" : ""
+        return (first.text + extra, true)
     }
 
     private var gaugeColor: Color {
         if monitor.systemCPUPercent >= 80 { return .red }
         if monitor.systemCPUPercent >= 55 { return .orange }
         return .mint
-    }
-
-    private var emptyTitle: String {
-        if !search.isEmpty { return "검색 결과가 없습니다" }
-        return switch scope {
-        case .attention: "확인할 프로세스가 없습니다"
-        case .agents: "에이전트 프로세스가 없습니다"
-        case .all: "일치하는 프로세스가 없습니다"
-        }
-    }
-
-    private var emptyDescription: String {
-        if !search.isEmpty { return "다른 프로세스 이름, PID 또는 프로젝트를 검색해보세요." }
-        return switch scope {
-        case .attention: "CPU 또는 메모리 사용량이 오래 높은 프로세스를 표시합니다."
-        case .agents: "지원하는 코딩 에이전트를 실행하거나 검색어를 바꿔보세요."
-        case .all: "다른 프로세스 이름, PID 또는 프로젝트를 검색해보세요."
-        }
     }
 
     private var memorySummary: String {
@@ -468,8 +585,8 @@ struct WatchdogMenuView: View {
             .map { entry in
                 ProcessOutcomeSummary(
                     identity: entry.key,
-                    text: "PID \(entry.key.pid) · \(outcomeText(entry.value))",
-                    isError: outcomeIsError(entry.value)
+                    text: "PID \(entry.key.pid) · \(entry.value.localizedDescription)",
+                    isError: entry.value.isError
                 )
             }
         let failures: [ProcessOutcomeSummary] = localActionFailures.compactMap { entry in
@@ -483,18 +600,41 @@ struct WatchdogMenuView: View {
         return (monitored + failures).sorted { $0.identity.pid < $1.identity.pid }
     }
 
-    private func outcomeText(_ outcome: ProcessActionOutcome) -> String {
-        outcome.localizedDescription
+    private func recentActionSymbol(_ action: ActionJournalEntry.ActionKind) -> String {
+        switch action {
+        case .suspend: "pause.fill"
+        case .resume: "play.fill"
+        case .terminate: "xmark.circle"
+        case .forceQuit: "bolt.trianglebadge.exclamationmark"
+        }
     }
 
-    private func outcomeIsError(_ outcome: ProcessActionOutcome) -> Bool {
-        outcome.isError
+    private func recentActionTitle(_ entry: ActionJournalEntry) -> String {
+        let action = JournalPresentation.actionLabel(entry.action)
+        if let reason = entry.reason, !reason.isEmpty {
+            return "\(entry.displayName) \(action) · \(reason)"
+        }
+        return "\(entry.displayName) \(action)"
     }
 
-    private func observationText(_ lastUpdated: Date) -> String {
-        let age = max(0, Int(Date().timeIntervalSince(lastUpdated)))
-        let freshness = age < 1 ? "방금 관찰" : "\(age)초 전 관찰"
-        return "\(freshness) · \(WatchdogFormatters.updatedTime.string(from: lastUpdated))"
+    private func relativeTime(_ date: Date) -> String {
+        Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "ko_KR")
+        formatter.unitsStyle = .short
+        return formatter
+    }()
+
+    private func openWindow(section: WindowSection? = nil) {
+        dismiss()
+        if let section {
+            WatchdogWindowOpener.openMainWindow(section: section)
+        } else {
+            WatchdogWindowOpener.openMainWindow()
+        }
     }
 
     private func prepareDestructiveAction(

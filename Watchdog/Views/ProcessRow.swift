@@ -13,18 +13,21 @@ struct ProcessRow: View {
     let onForceQuit: () -> Void
     let onIgnore: () -> Void
     let onUndoIgnore: () -> Void
+    var compact = false
 
     var body: some View {
-        HStack(spacing: 10) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(iconColor.opacity(0.13))
-                Image(systemName: iconName)
-                    .foregroundStyle(iconColor)
-                    .font(.system(size: 15, weight: .semibold))
+        HStack(spacing: compact ? 8 : 10) {
+            if !compact {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(iconColor.opacity(0.13))
+                    Image(systemName: iconName)
+                        .foregroundStyle(iconColor)
+                        .font(.system(size: 15, weight: .semibold))
+                }
+                .frame(width: 34, height: 34)
+                .accessibilityHidden(true)
             }
-            .frame(width: 34, height: 34)
-            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
@@ -139,8 +142,8 @@ struct ProcessRow: View {
             }
             .fixedSize()
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.horizontal, compact ? 8 : 10)
+        .padding(.vertical, compact ? 5 : 7)
         .background(rowBackground, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(accessibilityLabel)
