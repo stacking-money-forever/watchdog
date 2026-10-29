@@ -1,0 +1,286 @@
+{
+  "exitCodes": {
+    "success": 0,
+    "failure": 1,
+    "usage": 2,
+    "blocked": 3,
+    "refused": 4
+  },
+  "processKind": [
+    "agent",
+    "service",
+    "browserRenderer",
+    "application",
+    "system",
+    "other"
+  ],
+  "orphanReason": [
+    "reparentedToLaunchd",
+    "missingParent",
+    "cyclicLineage",
+    "detachedSession",
+    "temporaryLaunchPath"
+  ],
+  "alertReasonKind": [
+    "sustainedCPU",
+    "sustainedMemory",
+    "orphan"
+  ],
+  "processActionOutcome": [
+    "signalDelivered",
+    "suspended",
+    "resumed",
+    "awaitingExit",
+    "exited",
+    "stillRunning",
+    "identityChanged",
+    "verificationFailed"
+  ],
+  "processActionOutcomeFailedPrefix": "failed:",
+  "journalSource": [
+    "app",
+    "auto",
+    "cli"
+  ],
+  "journalAction": [
+    "suspend",
+    "resume",
+    "terminate",
+    "forceQuit"
+  ],
+  "autoSuspendScope": [
+    "agent",
+    "session"
+  ],
+  "agentConfidence": [
+    "known",
+    "suspected"
+  ],
+  "watchEventType": [
+    "watch.start",
+    "auto-suspend.restrict",
+    "resumed.by-user",
+    "alert.cpu",
+    "alert.memory",
+    "cleared.cpu",
+    "cleared.memory",
+    "session-hot",
+    "session-high-memory",
+    "auto-suspend",
+    "auto-suspend.failed",
+    "auto-suspend.skipped",
+    "sample",
+    "sample.failed",
+    "watch.end"
+  ],
+  "listScope": [
+    "attention",
+    "agents",
+    "all"
+  ],
+  "listFlags": [
+    "cpu",
+    "memory",
+    "orphan",
+    "suspected",
+    "stopped-by-watchdog",
+    "protected"
+  ],
+  "listFlagViaPrefix": "via:",
+  "listFlagViaPattern": "^via:.+#\\d+$",
+  "sessionFlags": [
+    "suspended",
+    "orphan",
+    "suspected",
+    "service"
+  ],
+  "stoppedSource": [
+    "auto",
+    "manual",
+    "cli"
+  ],
+  "controlAction": [
+    "suspend",
+    "resume",
+    "terminate",
+    "force-quit"
+  ],
+  "controlResult": [
+    "ok",
+    "unverified",
+    "blocked",
+    "refused",
+    "usage",
+    "failed"
+  ],
+  "stoppedResumeResult": [
+    "resumed",
+    "failed",
+    "skipped"
+  ],
+  "auditMissingKind": "missing",
+  "fields": {
+    "ProcessRecord": [
+      "token",
+      "pid",
+      "parentPID",
+      "userID",
+      "name",
+      "path",
+      "kind",
+      "state",
+      "suspended",
+      "cpuPercent",
+      "residentBytes",
+      "tty",
+      "elapsed",
+      "orphanReason",
+      "launchScript",
+      "agentAncestorPID",
+      "agentAncestorName",
+      "workingDirectory",
+      "worktree",
+      "controllable",
+      "watchdogSuspended",
+      "flags"
+    ],
+    "SessionRecord": [
+      "id",
+      "rootPID",
+      "name",
+      "kind",
+      "workingDirectory",
+      "projectName",
+      "members",
+      "memberCount",
+      "cpuPercent",
+      "residentBytes",
+      "isSuspended",
+      "elapsed"
+    ],
+    "WatchEvent": [
+      "time",
+      "type",
+      "token",
+      "name",
+      "detail"
+    ],
+    "SessionAlertEvent": [
+      "event",
+      "token",
+      "name",
+      "cpuPercent",
+      "memberCount"
+    ],
+    "CLIStoppedRecord": [
+      "token",
+      "name",
+      "path",
+      "suspendedAt",
+      "source",
+      "groupID"
+    ],
+    "CLIStoppedResumeRecord": [
+      "token",
+      "name",
+      "result",
+      "message"
+    ],
+    "CLIDoctorReport": [
+      "libprocMilliseconds",
+      "psMilliseconds",
+      "processCount",
+      "ownProcessCount",
+      "agentCount",
+      "agentsWithWorkingDirectory",
+      "ledgerPath",
+      "ledgerEntries",
+      "settings",
+      "autoSuspendEnabled",
+      "appRunning",
+      "loginItemStatus",
+      "loginItemOptedOut",
+      "loginItemLastError",
+      "rulesPath",
+      "rulesStatus",
+      "problems"
+    ],
+    "CLIRulesShowReport": [
+      "path",
+      "status",
+      "reason",
+      "rules",
+      "validationIssues",
+      "appliedCount"
+    ],
+    "ActionJournalEntry": [
+      "id",
+      "at",
+      "source",
+      "action",
+      "pid",
+      "startTimeMicroseconds",
+      "userID",
+      "executablePath",
+      "displayName",
+      "workingDirectory",
+      "reason",
+      "outcome",
+      "undoOf"
+    ],
+    "AuditReport": [
+      "snapshotCount",
+      "labeledCount",
+      "kind",
+      "agentName",
+      "sessionRoot",
+      "orphan",
+      "orphanReason",
+      "kindConfusion",
+      "mismatches",
+      "toleratedMismatchCount",
+      "untoleratedMismatchCount"
+    ],
+    "AuditFieldCounts": [
+      "compared",
+      "matches",
+      "mismatches",
+      "tolerated"
+    ],
+    "AuditMismatch": [
+      "pid",
+      "field",
+      "expected",
+      "actual",
+      "note",
+      "tolerated"
+    ],
+    "ClassificationSummary": [
+      "snapshotCount",
+      "kinds",
+      "agents",
+      "orphans"
+    ],
+    "ClassificationAgentRow": [
+      "pid",
+      "agentName",
+      "workingDirectory"
+    ],
+    "ClassificationOrphanRow": [
+      "pid",
+      "path",
+      "orphanReason"
+    ],
+    "AgentRules": [
+      "agentNames",
+      "packageMarkers",
+      "serviceSubcommands",
+      "sessionHosts",
+      "ignoreNames"
+    ],
+    "PackageMarker": [
+      "agent",
+      "marker"
+    ]
+  }
+}

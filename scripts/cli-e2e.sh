@@ -121,6 +121,16 @@ check "terminate by bare PID is a usage error" expect_exit 2 "$cli" terminate "$
 check "resume by PID" expect_exit 0 "$cli" resume "$a"
 check "process runs again" wait_until running "$a"
 check "ledger cleared on resume" test "$(ledger_count)" = 0
+check "journal --json" expect_exit 0 "$cli" journal --json --limit 20
+check "journal lists the suspend/resume the CLI just did" /usr/bin/python3 -c '
+import json, sys
+pid = int(sys.argv[1])
+entries = json.load(open(sys.argv[2]))
+actions = [(row.get("action"), row.get("source"), row.get("pid")) for row in entries]
+ok_suspend = any(action == "suspend" and source == "cli" and process == pid for action, source, process in actions)
+ok_resume = any(action == "resume" and source == "cli" and process == pid for action, source, process in actions)
+sys.exit(0 if ok_suspend and ok_resume else 1)
+' "$a" "$work/last.out"
 
 echo "Terminate a stopped process (SIGCONT then SIGTERM)"
 check "suspend again" expect_exit 0 "$cli" suspend "$token_a" --force
@@ -342,6 +352,9 @@ check "audit fixture+labels has no untolerated mismatches" expect_exit 0 \
 check "audit JSON reports zero untolerated mismatches" /usr/bin/python3 -c \
   'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("untoleratedMismatchCount")==0 else 1)' \
   "$work/last.out"
+
+echo "JSON contract"
+check "check-cli-json" "$repo_root/scripts/check-cli-json.sh" "$cli"
 
 echo
 echo "cli-e2e: $pass passed, $fail failed (work dir $work)"

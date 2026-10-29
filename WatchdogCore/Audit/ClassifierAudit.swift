@@ -159,7 +159,7 @@ enum ClassifierAudit {
         var agents: [ClassificationSummary.AgentRow] = []
         var orphans: [ClassificationSummary.OrphanRow] = []
         for snapshot in snapshots {
-            kinds[snapshot.kind.rawValue, default: 0] += 1
+            kinds[snapshot.kind.cliJSONValue, default: 0] += 1
             if snapshot.kind == .agent, let name = snapshot.agentName {
                 agents.append(
                     .init(pid: snapshot.id, agentName: name, workingDirectory: snapshot.workingDirectory)
@@ -167,7 +167,7 @@ enum ClassifierAudit {
             }
             if snapshot.suspectedOrphan {
                 orphans.append(
-                    .init(pid: snapshot.id, path: snapshot.executablePath, orphanReason: snapshot.orphanReason?.rawValue)
+                    .init(pid: snapshot.id, path: snapshot.executablePath, orphanReason: snapshot.orphanReason?.cliJSONValue)
                 )
             }
         }
@@ -202,7 +202,7 @@ enum ClassifierAudit {
         for (pid, label) in orderedLabels {
             let tolerated = label.tolerance == "miss"
             let snapshot = byPID[pid]
-            let predictedKind = snapshot?.kind.rawValue ?? "missing"
+            let predictedKind = snapshot?.kind.cliJSONValue ?? CLIJSONContract.auditMissingKind
             confusion[label.kind, default: [:]][predictedKind, default: 0] += 1
 
             compare(
@@ -260,7 +260,7 @@ enum ClassifierAudit {
                 mismatches: &mismatches
             )
 
-            if let expectedReason = label.orphanReason, let actualReason = snapshot?.orphanReason?.rawValue {
+            if let expectedReason = label.orphanReason, let actualReason = snapshot?.orphanReason?.cliJSONValue {
                 compare(
                     pid: pid,
                     field: "orphanReason",

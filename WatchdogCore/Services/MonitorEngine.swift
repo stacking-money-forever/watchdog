@@ -16,7 +16,7 @@ struct MonitorSettings: Equatable, Sendable {
         static let autoSuspendScope = "autoSuspendScope"
     }
 
-    enum AutoSuspendScope: String, Codable, Sendable {
+    enum AutoSuspendScope: String, CaseIterable, Codable, Sendable {
         case agent
         case session
     }

@@ -77,11 +77,13 @@
 		501F9520A38B83EF305A2115 /* OrphanClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32918E660C0992C2F35A5B13 /* OrphanClassifier.swift */; };
 		512EA47F515D97929F2EA5B4 /* SustainedProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6911B2A88595B6A3722F424 /* SustainedProcessTracker.swift */; };
 		531C684D606150763B365CC8 /* SessionRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82E883B7BDE12150D2961BD7 /* SessionRow.swift */; };
+		53935C8EB6E49EED962F26EC /* CLIJSONContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44C4CB48FA7DE948800020B /* CLIJSONContract.swift */; };
 		53D3386B0F4117899C6AED8D /* WindowSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 588B1B3D2DB87B8B134B0A23 /* WindowSection.swift */; };
 		5492D1F9273F86E8CCA0D848 /* LibprocProcessLister.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD72B448514951397B7751C /* LibprocProcessLister.swift */; };
 		54BD7FD1A4C0F26A3034EBB1 /* WatchdogMenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EAA9B3C60E582F3415F618F /* WatchdogMenuBarLabel.swift */; };
 		55C782FF961600D6810E4D30 /* CLIControl.swift in Sources */ = {isa = PBXBuildFile; fileRef = D07A0DA4AAF1A717E149916D /* CLIControl.swift */; };
 		56991E29F6DB718A1316FC43 /* ProcessFixture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71526ED219B179D0C8A84231 /* ProcessFixture.swift */; };
+		577B8512542FA2131B6B996C /* CLIJSONContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93A5EE9A6B4EC8236FA96597 /* CLIJSONContractTests.swift */; };
 		5796C914BF7785407A4F591F /* ProcessMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACFF779D13EFEB553C28D52B /* ProcessMonitor.swift */; };
 		58C5183AFCBD4C22E084588B /* WatchdogWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABA1BD279B9FDC4AB8CB3DE /* WatchdogWindowView.swift */; };
 		58D3AAC42A8351D70BAE28F3 /* WatchdogMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91B1785C03A9A0C61C008931 /* WatchdogMenuView.swift */; };
@@ -97,6 +99,7 @@
 		61BA958ABA6CC96B27E4BAF4 /* WatchdogWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABA1BD279B9FDC4AB8CB3DE /* WatchdogWindowView.swift */; };
 		61FE5ED52B9BFD823B4691E7 /* CommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83C18A832422855D6050ED08 /* CommandRunner.swift */; };
 		62C281FD6ADB2B8EFDFADBEA /* SessionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 647ED15AACD0784F0144910F /* SessionsView.swift */; };
+		63313DE1A8FDCBB15BCBA927 /* CLIJSONContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44C4CB48FA7DE948800020B /* CLIJSONContract.swift */; };
 		635F348E94ACEA4F0541E28C /* LaunchPath.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE9A6E26389187D5D7A312E2 /* LaunchPath.swift */; };
 		63901463481592201A49A80A /* CommandRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83C18A832422855D6050ED08 /* CommandRunner.swift */; };
 		6398DE9B27FEFE0B3B3E6A20 /* JournalPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97E0BABFBB6FBFF464C27B24 /* JournalPresentation.swift */; };
@@ -130,6 +133,7 @@
 		7C92D11B9F0FC21F52706CE4 /* HotProcessTrackerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0BF20993B973304DDD6FDE3 /* HotProcessTrackerTests.swift */; };
 		7EAD3EB031E5760A5517CAD3 /* SessionAggregator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 779CFEFC94E96F1FF77A4186 /* SessionAggregator.swift */; };
 		7F249F0BA97061658D8A6BB2 /* WatchdogMenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EAA9B3C60E582F3415F618F /* WatchdogMenuBarLabel.swift */; };
+		7FD68D68DE73DF83F743ACC0 /* CLIJSONContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44C4CB48FA7DE948800020B /* CLIJSONContract.swift */; };
 		8021BB30D03D6BDD44AF1EA3 /* AgentRules.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1249C4CC4AF4A8F18BF071B2 /* AgentRules.swift */; };
 		8061E185DA76CD0BEFEEE464 /* SustainedProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6911B2A88595B6A3722F424 /* SustainedProcessTracker.swift */; };
 		81077925489CFE90A035155E /* WatchdogPreviewApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5297CC89235C51FCFAD950 /* WatchdogPreviewApp.swift */; };
@@ -149,6 +153,7 @@
 		94E1ECF55BA28537DB85B592 /* AgentCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C9DAA70A8F6217B0577E2B /* AgentCatalog.swift */; };
 		9550449AF6395322C74FF41C /* AgentCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C9DAA70A8F6217B0577E2B /* AgentCatalog.swift */; };
 		97FC360356194D7D20A0C820 /* AgentSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69D7DEE00DC98973732B8A4A /* AgentSession.swift */; };
+		983835DA58382FE09E2A1244 /* CLIJSONContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44C4CB48FA7DE948800020B /* CLIJSONContract.swift */; };
 		9862D9B8962B8A3F3E5E4B59 /* DestructiveConfirmationCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2F1986692F0ACA7ED96C4C3 /* DestructiveConfirmationCard.swift */; };
 		98E83FA641C192A2895D8B7D /* MemoryProcessTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38BA0DD1569E7204133ECE5D /* MemoryProcessTracker.swift */; };
 		9B61B5A0E10578089BE2D860 /* MonitorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */; };
@@ -190,6 +195,7 @@
 		BAAC235E6343CD6ED8135744 /* JournalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57A28E7A43CC7AC2ACB501A7 /* JournalView.swift */; };
 		BC5A0A005A1F675842C6EB45 /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A6D48371DD1B87B52F0ABF3 /* Formatters.swift */; };
 		BC85CF6A35C90A99B562E850 /* MonitorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */; };
+		BD09083308A3961EFD1969BD /* CLIJSONContract.swift in Sources */ = {isa = PBXBuildFile; fileRef = B44C4CB48FA7DE948800020B /* CLIJSONContract.swift */; };
 		BF5B6137041BFE4C21A2705F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FD15E53CE2D0BCF424F15B31 /* Assets.xcassets */; };
 		C151E1886CD9658A689331FC /* MonitorEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */; };
 		C1F9025AD9FF1D3DF8ECEC45 /* RulesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 339425344702731E1DCB94ED /* RulesView.swift */; };
@@ -344,6 +350,7 @@
 		83C18A832422855D6050ED08 /* CommandRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRunner.swift; sourceTree = "<group>"; };
 		8A2BB49D9B49611B4702C2DA /* SessionsPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsPresentationTests.swift; sourceTree = "<group>"; };
 		91B1785C03A9A0C61C008931 /* WatchdogMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchdogMenuView.swift; sourceTree = "<group>"; };
+		93A5EE9A6B4EC8236FA96597 /* CLIJSONContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIJSONContractTests.swift; sourceTree = "<group>"; };
 		957E9EA15A2EC5B7ED3190DB /* MonitorEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MonitorEngine.swift; sourceTree = "<group>"; };
 		95D2446E20A77CE510668AF0 /* ProcessSampler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessSampler.swift; sourceTree = "<group>"; };
 		97E0BABFBB6FBFF464C27B24 /* JournalPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JournalPresentation.swift; sourceTree = "<group>"; };
@@ -359,6 +366,7 @@
 		ACFF779D13EFEB553C28D52B /* ProcessMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessMonitor.swift; sourceTree = "<group>"; };
 		AF12DB2EA16F67C7C70CB251 /* ActionJournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionJournalTests.swift; sourceTree = "<group>"; };
 		B0BF20993B973304DDD6FDE3 /* HotProcessTrackerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotProcessTrackerTests.swift; sourceTree = "<group>"; };
+		B44C4CB48FA7DE948800020B /* CLIJSONContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIJSONContract.swift; sourceTree = "<group>"; };
 		BE9A6E26389187D5D7A312E2 /* LaunchPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchPath.swift; sourceTree = "<group>"; };
 		C03FDE0F9F9DBEE008C82AAD /* AccessibilityAnnouncer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityAnnouncer.swift; sourceTree = "<group>"; };
 		C11B914CA39FB9CFB5A8E654 /* ClassifierAccuracyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClassifierAccuracyTests.swift; sourceTree = "<group>"; };
@@ -521,6 +529,7 @@
 				18C12B4B08A372801C1A2504 /* AutoSuspendTargetFilterTests.swift */,
 				C11B914CA39FB9CFB5A8E654 /* ClassifierAccuracyTests.swift */,
 				E0C056B715E840AC8DCF3E48 /* CLIControlTests.swift */,
+				93A5EE9A6B4EC8236FA96597 /* CLIJSONContractTests.swift */,
 				2C7FAF61A60B691B53E6364D /* Fixtures */,
 				B0BF20993B973304DDD6FDE3 /* HotProcessTrackerTests.swift */,
 				45C8A441F6FF0FD01B4C5DF5 /* JournalPresentationTests.swift */,
@@ -577,6 +586,7 @@
 			children = (
 				F0423861B443E7AA3A233041 /* AutoSuspendTargetFilter.swift */,
 				D07A0DA4AAF1A717E149916D /* CLIControl.swift */,
+				B44C4CB48FA7DE948800020B /* CLIJSONContract.swift */,
 			);
 			path = CLI;
 			sourceTree = "<group>";
@@ -889,6 +899,7 @@
 				C7AF25C121BFFBB8B02B9543 /* AgentSession.swift in Sources */,
 				35A5825DE85AB688AE9E6E86 /* AutoSuspendTargetFilter.swift in Sources */,
 				A086FCA936BBF66D6BD452D2 /* CLIControl.swift in Sources */,
+				BD09083308A3961EFD1969BD /* CLIJSONContract.swift in Sources */,
 				D79E1B918D8E64770376C3FA /* ClassifierAudit.swift in Sources */,
 				0C0A439DED93356C5A8C1E43 /* CommandRunner.swift in Sources */,
 				4690B6D2C286610DEB32528E /* DestructiveConfirmationCard.swift in Sources */,
@@ -942,6 +953,7 @@
 				BAA0555D7C4DFEA6C423633B /* AgentSession.swift in Sources */,
 				693924C91ED2967378C328EA /* AutoSuspendTargetFilter.swift in Sources */,
 				9F21E1DB59E3EB397E1681CE /* CLIControl.swift in Sources */,
+				63313DE1A8FDCBB15BCBA927 /* CLIJSONContract.swift in Sources */,
 				892731B64BA2CD559BEC6BBA /* ClassifierAudit.swift in Sources */,
 				E32DA9871439EF6FE4F3C92F /* CommandRunner.swift in Sources */,
 				18026150F568E6A689122DA8 /* DestructiveConfirmationCard.swift in Sources */,
@@ -995,6 +1007,7 @@
 				A8ADD2EE90C2C3056C5A4B89 /* AgentSession.swift in Sources */,
 				B3AC4289215E4DD0F6B17E33 /* AutoSuspendTargetFilter.swift in Sources */,
 				2CA916D4C73160C37CD4EE2B /* CLIControl.swift in Sources */,
+				53935C8EB6E49EED962F26EC /* CLIJSONContract.swift in Sources */,
 				9F50B1354862208541BDF0CA /* ClassifierAudit.swift in Sources */,
 				63901463481592201A49A80A /* CommandRunner.swift in Sources */,
 				64BE520ACD7B77112C31787E /* DestructiveConfirmationCard.swift in Sources */,
@@ -1048,6 +1061,7 @@
 				5DB2FCA8D30EFF777C1D7905 /* AgentSession.swift in Sources */,
 				81B7979BD998A234638C91B5 /* AutoSuspendTargetFilter.swift in Sources */,
 				55C782FF961600D6810E4D30 /* CLIControl.swift in Sources */,
+				7FD68D68DE73DF83F743ACC0 /* CLIJSONContract.swift in Sources */,
 				0BADF4E61FF75E6ABA3AFA8F /* ClassifierAudit.swift in Sources */,
 				73D5BC333D53A6C807D7AC00 /* CommandRunner.swift in Sources */,
 				9862D9B8962B8A3F3E5E4B59 /* DestructiveConfirmationCard.swift in Sources */,
@@ -1109,6 +1123,7 @@
 				D263425B3440805C0F4105A6 /* AutoSuspendPolicyTests.swift in Sources */,
 				8AD8F6117450E46CDB003182 /* AutoSuspendTargetFilterTests.swift in Sources */,
 				DE835109721373E4A990B4B1 /* CLIControlTests.swift in Sources */,
+				577B8512542FA2131B6B996C /* CLIJSONContractTests.swift in Sources */,
 				0357DF863E636A85636D50DF /* ClassifierAccuracyTests.swift in Sources */,
 				7C92D11B9F0FC21F52706CE4 /* HotProcessTrackerTests.swift in Sources */,
 				4756DA12DF60C602BB2F0633 /* JournalPresentationTests.swift in Sources */,
@@ -1139,6 +1154,7 @@
 				97FC360356194D7D20A0C820 /* AgentSession.swift in Sources */,
 				A6E00BD3EA01AF90955F5192 /* AutoSuspendTargetFilter.swift in Sources */,
 				089CBF602CECDD0CAA21159C /* CLIControl.swift in Sources */,
+				983835DA58382FE09E2A1244 /* CLIJSONContract.swift in Sources */,
 				C309EEE3F294C5F4C253F417 /* ClassifierAudit.swift in Sources */,
 				61FE5ED52B9BFD823B4691E7 /* CommandRunner.swift in Sources */,
 				A261165108B5E3B5A8AF5605 /* Formatters.swift in Sources */,
@@ -1217,7 +1233,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
@@ -1236,7 +1252,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.6;
+				MARKETING_VERSION = 0.2.7;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -1479,7 +1495,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 11;
+				CURRENT_PROJECT_VERSION = 12;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -1492,7 +1508,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 0.2.6;
+				MARKETING_VERSION = 0.2.7;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

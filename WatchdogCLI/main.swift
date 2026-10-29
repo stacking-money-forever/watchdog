@@ -30,6 +30,8 @@ let usageText = """
       규칙 파일을 읽어 검증합니다. 문제가 있으면 종료 코드 1입니다.
   rules init
       표준 경로에 예시 규칙 파일을 만듭니다. 이미 있으면 거부합니다.
+  journal [--limit N] [--json]
+      Watchdog이 보낸 제어 동작 기록을 최신순으로 보여 줍니다. 기본 50줄.
   snapshot [--out FILE]
       현재 프로세스 목록을 분류 정확도 픽스처와 같은 JSON으로 저장합니다. --out이 없으면 표준 출력입니다.
   audit FIXTURE [--labels FILE] [--json]
@@ -59,7 +61,7 @@ struct Arguments {
 
     static let valueOptions: Set<String> = [
         "--scope", "--search", "--interval", "--count", "--duration", "--cpu", "--sustain", "--memory",
-        "--out", "--labels",
+        "--out", "--labels", "--limit",
     ]
     static let knownFlags: Set<String> = ["--json", "--force", "--auto-suspend", "--resume-all", "--help", "-h", "--version"]
 
@@ -151,7 +153,7 @@ func pad(_ text: String, _ width: Int) -> String {
 func inspectKindText(_ process: ProcessSnapshot) -> String {
     if process.agentConfidence == .suspected { return "에이전트(추정)" }
     if process.kind == .service { return "서비스" }
-    return process.kind.rawValue
+    return process.kind.cliJSONValue
 }
 
 func activateUserRules() -> AgentRules.LoadResult {
@@ -174,96 +176,6 @@ func rulesStatusLine(_ loaded: AgentRules.LoadResult) -> String {
     case let .invalid(_, reason):
         return "손상(\(reason))"
     }
-}
-
-struct ProcessRecord: Encodable {
-    let token: String
-    let pid: Int32
-    let parentPID: Int32
-    let userID: UInt32
-    let name: String
-    let path: String
-    let kind: String
-    let state: String
-    let suspended: Bool
-    let cpuPercent: Double
-    let residentBytes: UInt64
-    let tty: String
-    let elapsed: String
-    let orphanReason: String?
-    let launchScript: String?
-    let agentAncestorPID: Int32?
-    let agentAncestorName: String?
-    let workingDirectory: String?
-    let worktree: String?
-    let controllable: Bool
-    let watchdogSuspended: Bool
-    let flags: [String]
-
-    init(_ process: ProcessSnapshot, flags: [String], watchdogSuspended: Bool) {
-        token = IdentityToken(process.identity).description
-        pid = process.id
-        parentPID = process.parentPID
-        userID = process.userID
-        name = process.displayName
-        path = process.executablePath
-        kind = process.kind.rawValue
-        state = process.state
-        suspended = process.isSuspended
-        cpuPercent = (process.cpuPercent * 10).rounded() / 10
-        residentBytes = process.residentBytes
-        tty = process.tty
-        elapsed = process.elapsed
-        orphanReason = process.orphanReason?.rawValue
-        launchScript = process.launchScript
-        agentAncestorPID = process.agentAncestor?.pid
-        agentAncestorName = process.agentAncestor?.name
-        workingDirectory = process.workingDirectory
-        worktree = process.worktreeState.map { state in
-            [state.verdict.localizedDescription, state.detail].compactMap { $0 }.joined(separator: " · ")
-        }
-        controllable = !process.isProtected
-        self.watchdogSuspended = watchdogSuspended
-        self.flags = flags
-    }
-}
-
-struct SessionRecord: Encodable {
-    let id: String
-    let rootPID: Int32
-    let name: String
-    let kind: String
-    let workingDirectory: String?
-    let projectName: String?
-    let members: [Int32]
-    let memberCount: Int
-    let cpuPercent: Double
-    let residentBytes: UInt64
-    let isSuspended: Bool
-    let elapsed: String
-
-    init(_ session: AgentSession) {
-        id = IdentityToken(session.id).description
-        rootPID = session.rootPID
-        name = session.name
-        kind = session.kind.rawValue
-        workingDirectory = session.workingDirectory
-        projectName = session.projectName
-        members = session.members.map(\.pid)
-        memberCount = session.memberCount
-        cpuPercent = session.cpuPercent
-        residentBytes = session.residentBytes
-        isSuspended = session.isSuspended
-        elapsed = session.elapsed
-    }
-}
-
-struct SessionAlertEvent: Encodable {
-    let event: String
-    let token: String
-    let name: String
-    let cpuPercent: Double
-    let memberCount: Int
 }
 
 func appSettings() -> MonitorSettings {
@@ -289,8 +201,8 @@ func sampleWithCPU(interval: Double) async throws -> [ProcessSnapshot] {
 // MARK: - Commands
 
 func runList(_ arguments: Arguments) async throws -> Int32 {
-    let scope = arguments.options["--scope"] ?? "attention"
-    guard ["attention", "agents", "all"].contains(scope) else {
+    let scope = arguments.options["--scope"] ?? CLIJSONContract.ListScope.attention.rawValue
+    guard CLIJSONContract.ListScope(rawValue: scope) != nil else {
         throw CLIUsageError("--scope는 attention, agents, all 중 하나입니다.")
     }
     let interval = try arguments.double("--interval", default: 1, range: 0.2...10)
@@ -300,25 +212,27 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
 
     func flags(_ process: ProcessSnapshot) -> [String] {
         var flags: [String] = []
-        if process.cpuPercent >= settings.cpuThreshold { flags.append("cpu") }
-        if process.residentBytes >= settings.memoryThresholdBytes { flags.append("memory") }
-        if process.suspectedOrphan { flags.append("orphan") }
-        if process.agentConfidence == .suspected { flags.append("suspected") }
-        if let ancestor = process.agentAncestor { flags.append("via:\(ancestor.name)#\(ancestor.pid)") }
-        if stopped.contains(process.identity) { flags.append("stopped-by-watchdog") }
-        if process.isProtected { flags.append("protected") }
+        if process.cpuPercent >= settings.cpuThreshold { flags.append(CLIJSONContract.ListFlag.cpu) }
+        if process.residentBytes >= settings.memoryThresholdBytes { flags.append(CLIJSONContract.ListFlag.memory) }
+        if process.suspectedOrphan { flags.append(CLIJSONContract.ListFlag.orphan) }
+        if process.agentConfidence == .suspected { flags.append(CLIJSONContract.ListFlag.suspected) }
+        if let ancestor = process.agentAncestor {
+            flags.append(CLIJSONContract.ListFlag.via(name: ancestor.name, pid: ancestor.pid))
+        }
+        if stopped.contains(process.identity) { flags.append(CLIJSONContract.ListFlag.stoppedByWatchdog) }
+        if process.isProtected { flags.append(CLIJSONContract.ListFlag.protected) }
         return flags
     }
 
     switch scope {
-    case "attention":
+    case CLIJSONContract.ListScope.attention.rawValue:
         processes = processes.filter {
             !$0.isProtected
                 && ($0.cpuPercent >= settings.cpuThreshold
                     || $0.residentBytes >= settings.memoryThresholdBytes
                     || stopped.contains($0.identity))
         }
-    case "agents":
+    case CLIJSONContract.ListScope.agents.rawValue:
         processes = processes.filter { $0.kind == .agent || ($0.kind == .service && $0.agentName != nil) }
     default:
         break
@@ -350,7 +264,7 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
         emitJSON(processes.map { ProcessRecord($0, flags: flags($0), watchdogSuspended: stopped.contains($0.identity)) })
         return CLIExitCode.success
     }
-    if scope == "attention" {
+    if scope == CLIJSONContract.ListScope.attention.rawValue {
         print("기준: CPU \(Int(settings.cpuThreshold))% · 메모리 \(memoryText(settings.memoryThresholdBytes)) (순간값. 지속 판정은 watch)")
     }
     if processes.isEmpty {
@@ -365,7 +279,7 @@ func runList(_ arguments: Arguments) async throws -> Int32 {
                 + pad(String(format: "%.1f", process.cpuPercent), 8)
                 + pad(memoryText(process.residentBytes), 10)
                 + pad(process.state, 4)
-                + pad(process.kind.rawValue, 16)
+                + pad(process.kind.cliJSONValue, 16)
                 + pad(process.displayName, 24)
                 + ([flags(process).joined(separator: ","), project].filter { !$0.isEmpty }.joined(separator: " "))
         )
@@ -408,16 +322,16 @@ func runSessions(_ arguments: Arguments) async throws -> Int32 {
     print(pad("TOKEN", 30) + pad("CPU%", 8) + pad("MEM", 10) + pad("N", 4) + pad("KIND", 10) + pad("NAME", 24) + pad("PROJECT", 16) + "FLAGS")
     for session in sessions {
         var flags: [String] = []
-        if session.isSuspended { flags.append("suspended") }
-        if byIdentity[session.id]?.suspectedOrphan == true { flags.append("orphan") }
-        if byIdentity[session.id]?.agentConfidence == .suspected { flags.append("suspected") }
-        if session.kind == .service { flags.append("service") }
+        if session.isSuspended { flags.append(CLIJSONContract.SessionFlag.suspended) }
+        if byIdentity[session.id]?.suspectedOrphan == true { flags.append(CLIJSONContract.SessionFlag.orphan) }
+        if byIdentity[session.id]?.agentConfidence == .suspected { flags.append(CLIJSONContract.SessionFlag.suspected) }
+        if session.kind == .service { flags.append(CLIJSONContract.SessionFlag.service) }
         print(
             pad(IdentityToken(session.id).description, 30)
                 + pad(String(format: "%.1f", session.cpuPercent), 8)
                 + pad(memoryText(session.residentBytes), 10)
                 + pad(String(session.memberCount), 4)
-                + pad(session.kind.rawValue, 10)
+                + pad(session.kind.cliJSONValue, 10)
                 + pad(session.name, 24)
                 + pad(String((session.projectName ?? "").prefix(15)), 16)
                 + flags.joined(separator: ",")
@@ -498,12 +412,25 @@ func runControl(_ action: CLIAction, _ arguments: Arguments) async throws -> Int
             printError(message)
         }
         if arguments.json {
-            emitJSON(["result": decision.exitCode == CLIExitCode.blocked ? "blocked" : decision.exitCode == CLIExitCode.refused ? "refused" : "usage"])
+            let result: CLIJSONContract.ControlResult
+            if decision.exitCode == CLIExitCode.blocked {
+                result = .blocked
+            } else if decision.exitCode == CLIExitCode.refused {
+                result = .refused
+            } else {
+                result = .usage
+            }
+            emitJSON(["result": result.rawValue])
         }
         return decision.exitCode
     case let .failed(error, refused):
         printError((refused ? "거부됨: " : "실패: ") + (error.errorDescription ?? "\(error)"))
-        if arguments.json { emitJSON(["result": refused ? "refused" : "failed", "error": error.errorDescription ?? ""]) }
+        if arguments.json {
+            emitJSON([
+                "result": (refused ? CLIJSONContract.ControlResult.refused : .failed).rawValue,
+                "error": error.errorDescription ?? "",
+            ])
+        }
         return refused ? CLIExitCode.refused : CLIExitCode.failure
     case let .performed(report):
         for warning in report.warnings {
@@ -511,8 +438,8 @@ func runControl(_ action: CLIAction, _ arguments: Arguments) async throws -> Int
         }
         if arguments.json {
             emitJSON([
-                "result": report.outcome.isError ? "unverified" : "ok",
-                "action": report.action.rawValue,
+                "result": (report.outcome.isError ? CLIJSONContract.ControlResult.unverified : .ok).rawValue,
+                "action": report.action.cliJSONValue,
                 "token": report.token.description,
                 "name": report.name,
                 "outcome": report.outcome.localizedDescription,
@@ -535,14 +462,8 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
     let ledger = SuspensionLedger.standard()
     let records = try ledger.reconcile()
     if arguments.flags.contains("--resume-all") {
-        struct ResumeResult: Encodable {
-            let token: String
-            let name: String
-            let result: String
-            let message: String
-        }
         var failures = 0
-        var results: [ResumeResult] = []
+        var results: [CLIStoppedResumeRecord] = []
         let control = CLIControl(ledger: ledger)
         var handled: Set<ProcessIdentity> = []
         for record in records {
@@ -554,7 +475,14 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
             case let .performed(report):
                 handled.formUnion(report.accompanying.map(\.token.identity))
                 if report.outcome.isError { failures += 1 }
-                results.append(.init(token: token, name: report.name, result: report.outcome.isError ? "failed" : "resumed", message: report.outcome.localizedDescription))
+                results.append(
+                    CLIStoppedResumeRecord(
+                        token: token,
+                        name: report.name,
+                        result: (report.outcome.isError ? CLIJSONContract.StoppedResumeResult.failed : .resumed).rawValue,
+                        message: report.outcome.localizedDescription
+                    )
+                )
                 if !arguments.json {
                     print("resume: \(report.name) (\(report.token)) → \(report.outcome.localizedDescription)")
                     if !report.accompanying.isEmpty {
@@ -562,12 +490,14 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
                     }
                 }
                 for extra in report.accompanying {
-                    results.append(.init(
-                        token: extra.token.description,
-                        name: extra.name,
-                        result: extra.outcome.isError ? "failed" : "resumed",
-                        message: extra.outcome.localizedDescription
-                    ))
+                    results.append(
+                        CLIStoppedResumeRecord(
+                            token: extra.token.description,
+                            name: extra.name,
+                            result: (extra.outcome.isError ? CLIJSONContract.StoppedResumeResult.failed : .resumed).rawValue,
+                            message: extra.outcome.localizedDescription
+                        )
+                    )
                     if extra.outcome.isError { failures += 1 }
                     if !arguments.json {
                         print("  resume: \(extra.name) (\(extra.token)) → \(extra.outcome.localizedDescription)")
@@ -576,11 +506,25 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
             case let .failed(error, _):
                 failures += 1
                 let message = error.errorDescription ?? "\(error)"
-                results.append(.init(token: token, name: record.displayName, result: "failed", message: message))
+                results.append(
+                    CLIStoppedResumeRecord(
+                        token: token,
+                        name: record.displayName,
+                        result: CLIJSONContract.StoppedResumeResult.failed.rawValue,
+                        message: message
+                    )
+                )
                 if !arguments.json { printError("실패: \(record.displayName) (\(token)): \(message)") }
             case let .decided(decision):
                 failures += 1
-                results.append(.init(token: token, name: record.displayName, result: "skipped", message: "\(decision)"))
+                results.append(
+                    CLIStoppedResumeRecord(
+                        token: token,
+                        name: record.displayName,
+                        result: CLIJSONContract.StoppedResumeResult.skipped.rawValue,
+                        message: "\(decision)"
+                    )
+                )
                 if !arguments.json { printError("건너뜀: \(record.displayName): \(decision)") }
             }
         }
@@ -592,21 +536,13 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
         return failures == 0 ? CLIExitCode.success : CLIExitCode.failure
     }
     if arguments.json {
-        struct StoppedRecord: Encodable {
-            let token: String
-            let name: String
-            let path: String
-            let suspendedAt: Date
-            let source: String
-            let groupID: String?
-        }
         emitJSON(records.map {
-            StoppedRecord(
+            CLIStoppedRecord(
                 token: IdentityToken($0.identity).description,
                 name: $0.displayName,
                 path: $0.executablePath,
                 suspendedAt: $0.suspendedAt,
-                source: $0.source.rawValue,
+                source: $0.source.cliJSONValue,
                 groupID: $0.groupID
             )
         })
@@ -624,7 +560,7 @@ func runStopped(_ arguments: Arguments) async throws -> Int32 {
         print(
             pad(indent + IdentityToken(row.record.identity).description, 30)
                 + pad(row.record.displayName, 24)
-                + pad(row.record.source.rawValue, 8)
+                + pad(row.record.source.cliJSONValue, 8)
                 + formatter.string(from: row.record.suspendedAt)
         )
     }
@@ -659,14 +595,6 @@ private func groupedStoppedRows(_ records: [SuspensionRecord]) -> [StoppedRow] {
 
 // MARK: - watch
 
-struct WatchEvent: Encodable {
-    let time: Date
-    let type: String
-    let token: String?
-    let name: String?
-    let detail: String?
-}
-
 final class StopFlag: @unchecked Sendable {
     private let lock = NSLock()
     private var stopped = false
@@ -684,10 +612,10 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     // meaningful on this command (`list` uses --scope for a different enum).
     settings.autoSuspendEnabled = arguments.flags.contains("--auto-suspend")
     if let scopeText = arguments.options["--scope"] {
-        guard let scope = MonitorSettings.AutoSuspendScope(rawValue: scopeText) else {
+        guard let scope = CLIJSONContract.AutoSuspendScope(rawValue: scopeText) else {
             throw CLIUsageError("watch의 --scope는 agent 또는 session입니다.")
         }
-        settings.autoSuspendScope = scope
+        settings.autoSuspendScope = MonitorSettings.AutoSuspendScope(rawValue: scope.rawValue) ?? .agent
     } else {
         settings.autoSuspendScope = .agent
     }
@@ -731,12 +659,16 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
     }
 
     emit(
-        "watch.start",
+        CLIJSONContract.WatchEventType.watchStart.rawValue,
         nil,
-        "CPU \(Int(settings.cpuThreshold))% · 메모리 \(memoryText(settings.memoryThresholdBytes)) · 지속 \(Int(settings.sustainedDuration))초 · 자동 정지 \(settings.autoSuspendEnabled ? "켬(\(settings.autoSuspendScope.rawValue))" : "끔")"
+        "CPU \(Int(settings.cpuThreshold))% · 메모리 \(memoryText(settings.memoryThresholdBytes)) · 지속 \(Int(settings.sustainedDuration))초 · 자동 정지 \(settings.autoSuspendEnabled ? "켬(\(settings.autoSuspendScope.cliJSONValue))" : "끔")"
     )
     if settings.autoSuspendEnabled, !onlySelectors.isEmpty {
-        emit("auto-suspend.restrict", nil, "auto-suspend restricted to \(onlySelectors.count) targets")
+        emit(
+            CLIJSONContract.WatchEventType.autoSuspendRestrict.rawValue,
+            nil,
+            "auto-suspend restricted to \(onlySelectors.count) targets"
+        )
     }
     let sampler = ProcessSampler()
     let control = CLIControl()
@@ -769,7 +701,7 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
                 if !process.isSuspended {
                     engine.recordUserResume(identity)
                     autoSuspended.remove(identity)
-                    emit("resumed.by-user", process, "자동 정지 대상에서 제외")
+                    emit(CLIJSONContract.WatchEventType.resumedByUser.rawValue, process, "자동 정지 대상에서 제외")
                 }
             }
             var update = engine.ingest(sample.processes, settings: settings, at: clock.now)
@@ -779,19 +711,19 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             let byIdentity = Dictionary(update.processes.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
             for identity in update.newlyHot {
                 if let process = byIdentity[identity] {
-                    emit("alert.cpu", process, String(format: "CPU %.0f%% ≥ %.0f%% 지속", process.cpuPercent, settings.cpuThreshold))
+                    emit(CLIJSONContract.WatchEventType.alertCPU.rawValue, process, String(format: "CPU %.0f%% ≥ %.0f%% 지속", process.cpuPercent, settings.cpuThreshold))
                 }
             }
             for identity in update.newlyHighMemory {
                 if let process = byIdentity[identity] {
-                    emit("alert.memory", process, "메모리 \(memoryText(process.residentBytes)) 지속")
+                    emit(CLIJSONContract.WatchEventType.alertMemory.rawValue, process, "메모리 \(memoryText(process.residentBytes)) 지속")
                 }
             }
             for identity in previousHot.subtracting(update.hot) {
-                emit("cleared.cpu", byIdentity[identity], byIdentity[identity] == nil ? "PID \(identity.pid) 종료됨" : nil)
+                emit(CLIJSONContract.WatchEventType.clearedCPU.rawValue, byIdentity[identity], byIdentity[identity] == nil ? "PID \(identity.pid) 종료됨" : nil)
             }
             for identity in previousHighMemory.subtracting(update.highMemory) {
-                emit("cleared.memory", byIdentity[identity], byIdentity[identity] == nil ? "PID \(identity.pid) 종료됨" : nil)
+                emit(CLIJSONContract.WatchEventType.clearedMemory.rawValue, byIdentity[identity], byIdentity[identity] == nil ? "PID \(identity.pid) 종료됨" : nil)
             }
             let sessionsByID = Dictionary(update.sessions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             func emitSession(_ event: String, _ session: AgentSession) {
@@ -816,12 +748,12 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             }
             for identity in update.hotSessions.subtracting(previousHotSessions) {
                 if let session = sessionsByID[identity] {
-                    emitSession("session-hot", session)
+                    emitSession(CLIJSONContract.WatchEventType.sessionHot.rawValue, session)
                 }
             }
             for identity in update.highMemorySessions.subtracting(previousHighMemorySessions) {
                 if let session = sessionsByID[identity] {
-                    emitSession("session-high-memory", session)
+                    emitSession(CLIJSONContract.WatchEventType.sessionHighMemory.rawValue, session)
                 }
             }
             previousHot = update.hot
@@ -837,11 +769,11 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
                 ) {
                 case let .performed(report):
                     autoSuspended.insert(candidate.identity)
-                    emit("auto-suspend", candidate, report.outcome.localizedDescription)
+                    emit(CLIJSONContract.WatchEventType.autoSuspend.rawValue, candidate, report.outcome.localizedDescription)
                 case let .failed(error, _):
-                    emit("auto-suspend.failed", candidate, error.errorDescription)
+                    emit(CLIJSONContract.WatchEventType.autoSuspendFailed.rawValue, candidate, error.errorDescription)
                 case let .decided(decision):
-                    emit("auto-suspend.skipped", candidate, "\(decision)")
+                    emit(CLIJSONContract.WatchEventType.autoSuspendSkipped.rawValue, candidate, "\(decision)")
                 }
             }
             if settings.autoSuspendScope == .session {
@@ -859,7 +791,7 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
                 }
             }
             if !arguments.json, ticks == 1 {
-                emit("sample", nil, "\(update.processes.count)개 프로세스 관찰")
+                emit(CLIJSONContract.WatchEventType.sample.rawValue, nil, "\(update.processes.count)개 프로세스 관찰")
             }
         } catch {
             failures += 1
@@ -868,7 +800,7 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
             previousHighMemory = []
             previousHotSessions = []
             previousHighMemorySessions = []
-            emit("sample.failed", nil, error.localizedDescription)
+            emit(CLIJSONContract.WatchEventType.sampleFailed.rawValue, nil, error.localizedDescription)
         }
         let deadline = clock.now.advanced(by: .milliseconds(Int(interval * 1_000)))
         while !stop.isSet, clock.now < deadline {
@@ -876,38 +808,19 @@ func runWatch(_ arguments: Arguments) async throws -> Int32 {
         }
     }
     interrupt.cancel()
-    emit("watch.end", nil, "\(ticks)회 샘플 · 실패 \(failures)회")
+    emit(CLIJSONContract.WatchEventType.watchEnd.rawValue, nil, "\(ticks)회 샘플 · 실패 \(failures)회")
     return failures == 0 ? CLIExitCode.success : CLIExitCode.failure
 }
 
 // MARK: - doctor
 
 func runDoctor(_ arguments: Arguments) async throws -> Int32 {
-    struct Report: Encodable {
-        var libprocMilliseconds: [Double] = []
-        var psMilliseconds: Double?
-        var processCount = 0
-        var ownProcessCount = 0
-        var agentCount = 0
-        var agentsWithWorkingDirectory = 0
-        var ledgerPath: String
-        var ledgerEntries = 0
-        var settings: [String: Double]
-        var autoSuspendEnabled: Bool
-        var appRunning: Bool
-        var loginItemStatus: String?
-        var loginItemOptedOut: Bool
-        var loginItemLastError: String?
-        var rulesPath: String
-        var rulesStatus: String
-        var problems: [String] = []
-    }
     let clock = ContinuousClock()
     let settings = appSettings()
     let ledgerURL = ProcessInfo.processInfo.environment[SuspensionLedger.pathEnvironmentKey]
         ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
         .appendingPathComponent("Watchdog/suspensions.json").path ?? "?"
-    var report = Report(
+    var report = CLIDoctorReport(
         ledgerPath: ledgerURL,
         settings: [
             "cpuThreshold": settings.cpuThreshold,
@@ -1072,18 +985,10 @@ func runRulesShow(_ arguments: Arguments) throws -> Int32 {
         issues = []
     }
     if arguments.json {
-        struct Report: Encodable {
-            let path: String
-            let status: String
-            let reason: String?
-            let rules: AgentRules?
-            let validationIssues: [String]
-            let appliedCount: Int
-        }
         let reason: String?
         if case let .invalid(_, text) = loaded { reason = text } else { reason = nil }
         emitJSON(
-            Report(
+            CLIRulesShowReport(
                 path: url.path,
                 status: rulesStatusLine(loaded),
                 reason: reason,
@@ -1171,6 +1076,42 @@ func runRulesInit() throws -> Int32 {
     return CLIExitCode.success
 }
 
+func journalLimit(_ arguments: Arguments) throws -> Int {
+    guard let text = arguments.options["--limit"] else {
+        return CLIJSONContract.defaultJournalLimit
+    }
+    guard let parsed = Int(text), parsed >= 1 else {
+        throw CLIUsageError("--limit 값은 1 이상의 정수여야 합니다.")
+    }
+    return parsed
+}
+
+func runJournal(_ arguments: Arguments) throws -> Int32 {
+    let limit = try journalLimit(arguments)
+    let entries = ActionJournal.standard().recent(limit: limit)
+    if arguments.json {
+        emitJSON(entries)
+        return CLIExitCode.success
+    }
+    if entries.isEmpty {
+        print("기록이 없습니다.")
+        return CLIExitCode.success
+    }
+    let formatter = ISO8601DateFormatter()
+    print(pad("AT", 22) + pad("SRC", 6) + pad("ACTION", 12) + pad("PID", 8) + pad("NAME", 24) + "OUTCOME")
+    for entry in entries {
+        print(
+            pad(formatter.string(from: entry.at), 22)
+                + pad(entry.source.cliJSONValue, 6)
+                + pad(entry.action.cliJSONValue, 12)
+                + pad(String(entry.pid), 8)
+                + pad(entry.displayName, 24)
+                + entry.outcome
+        )
+    }
+    return CLIExitCode.success
+}
+
 func runAudit(_ arguments: Arguments) throws -> Int32 {
     guard let path = arguments.positionals.first else {
         throw CLIUsageError("audit에는 픽스처 파일이 필요합니다.")
@@ -1225,6 +1166,7 @@ func main() async -> Int32 {
         case "snapshot": return try runSnapshot(arguments)
         case "audit": return try runAudit(arguments)
         case "rules": return try runRules(arguments)
+        case "journal": return try runJournal(arguments)
         case "help": print(usageText); return CLIExitCode.success
         default:
             if let action = CLIAction(rawValue: command) {
