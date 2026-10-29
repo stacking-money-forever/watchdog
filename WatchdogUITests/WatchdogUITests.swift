@@ -115,7 +115,14 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         let cancel = app.windows.firstMatch.buttons["취소"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
-        try ensureKeyboardFocus(cancel)
+        // Do not click: clicking 취소 would dismiss the card. The card itself must
+        // hand focus to 취소 when it opens; only skip when another app holds focus.
+        if !waitForKeyboardFocus(cancel, timeout: 3) {
+            if app.state != .runningForeground {
+                throw XCTSkip("keyboard focus unavailable: another app is frontmost")
+            }
+            XCTFail("cancel should take keyboard focus when the confirmation card opens")
+        }
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(title.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)

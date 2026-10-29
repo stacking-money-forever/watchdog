@@ -169,9 +169,125 @@ private func clickNamed(pid: pid_t, wanted: String) {
     exit(4)
 }
 
+
+private func axNumber(_ element: AXUIElement, _ attribute: String) -> String {
+    var value: AnyObject?
+    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return "" }
+    if let number = value as? NSNumber { return number.stringValue }
+    return value as? String ?? ""
+}
+
+private func axFrame(_ element: AXUIElement) -> String {
+    var positionValue: AnyObject?
+    var sizeValue: AnyObject?
+    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue) == .success,
+          AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue) == .success
+    else { return "" }
+    var origin = CGPoint.zero
+    var size = CGSize.zero
+    AXValueGetValue(positionValue as! AXValue, .cgPoint, &origin)
+    AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
+    return "\(Int(origin.x)),\(Int(origin.y)) \(Int(size.width))x\(Int(size.height))"
+}
+
+/// Print `identifier<TAB>role<TAB>label<TAB>value<TAB>frame` for every element whose
+/// AXIdentifier starts with `prefix` (all windows, depth ≤ 16). Labels are the
+/// accessibility description/title; values are AXValue when present.
+private func listLabels(pid: pid_t, prefix: String) {
+    var printed = 0
+    func visit(_ element: AXUIElement, depth: Int) {
+        guard depth <= 16 else { return }
+        let identifier = axString(element, "AXIdentifier")
+        if identifier.hasPrefix(prefix) {
+            let role = axString(element, kAXRoleAttribute as String)
+            var label = axString(element, kAXDescriptionAttribute as String)
+            if label.isEmpty { label = axString(element, kAXTitleAttribute as String) }
+            let value = axNumber(element, kAXValueAttribute as String)
+            print([identifier, role, label, value, axFrame(element)].joined(separator: "\t"))
+            printed += 1
+        }
+        for child in axChildren(element) {
+            visit(child, depth: depth + 1)
+        }
+    }
+    for window in windows(of: pid) {
+        visit(window, depth: 0)
+    }
+    if printed == 0 {
+        FileHandle.standardError.write(Data("no element with identifier prefix \(prefix)\n".utf8))
+        exit(5)
+    }
+}
+
+/// AXPress the first element whose AXIdentifier equals `identifier` (no synthetic
+/// mouse events, so the user's cursor is untouched).
+private func pressIdentifier(pid: pid_t, identifier: String) {
+    func find(_ element: AXUIElement, depth: Int) -> AXUIElement? {
+        guard depth <= 16 else { return nil }
+        if axString(element, "AXIdentifier") == identifier { return element }
+        for child in axChildren(element) {
+            if let found = find(child, depth: depth + 1) { return found }
+        }
+        return nil
+    }
+    for window in windows(of: pid) {
+        if let match = find(window, depth: 0) {
+            let result = AXUIElementPerformAction(match, kAXPressAction as CFString)
+            guard result == .success else {
+                FileHandle.standardError.write(Data("AXPress failed (\(result.rawValue)) for \(identifier)\n".utf8))
+                exit(6)
+            }
+            return
+        }
+    }
+    FileHandle.standardError.write(Data("element not found: \(identifier)\n".utf8))
+    exit(4)
+}
+
+/// Print the status item's accessibility description without pressing it.
+private func extrasLabel(pid: pid_t) {
+    let app = AXUIElementCreateApplication(pid)
+    var value: AnyObject?
+    guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &value) == .success else {
+        FileHandle.standardError.write(Data("no AXExtrasMenuBar for pid \(pid)\n".utf8))
+        exit(5)
+    }
+    // swiftlint:disable:next force_cast
+    let bar = value as! AXUIElement
+    guard let item = axChildren(bar).first else {
+        FileHandle.standardError.write(Data("extras menu bar has no items\n".utf8))
+        exit(5)
+    }
+    var label = axString(item, kAXDescriptionAttribute as String)
+    if label.isEmpty { label = axString(item, kAXTitleAttribute as String) }
+    print(label)
+}
+
+/// AXPress the app's menu bar status item (AXExtrasMenuBar) — opens the popover.
+private func pressExtras(pid: pid_t) {
+    let app = AXUIElementCreateApplication(pid)
+    var value: AnyObject?
+    guard AXUIElementCopyAttributeValue(app, "AXExtrasMenuBar" as CFString, &value) == .success else {
+        FileHandle.standardError.write(Data("no AXExtrasMenuBar for pid \(pid)\n".utf8))
+        exit(5)
+    }
+    // swiftlint:disable:next force_cast
+    let bar = value as! AXUIElement
+    guard let item = axChildren(bar).first else {
+        FileHandle.standardError.write(Data("extras menu bar has no items\n".utf8))
+        exit(5)
+    }
+    let result = AXUIElementPerformAction(item, kAXPressAction as CFString)
+    guard result == .success else {
+        FileHandle.standardError.write(Data("AXPress on status item failed (\(result.rawValue))\n".utf8))
+        exit(6)
+    }
+    print(axString(item, kAXDescriptionAttribute as String))
+}
+
 let args = CommandLine.arguments
-guard args.count >= 4 else {
-    FileHandle.standardError.write(Data("usage: ax-walk <pid> dump|click <surface-or-name>\n".utf8))
+guard args.count >= 3, args.count >= 4 || args[2] == "extras" || args[2] == "extras-label" else {
+    FileHandle.standardError.write(Data("usage: ax-walk <pid> dump <surface> | click <name> | labels <identifier-prefix> | press <identifier> | extras | extras-label\n".utf8))
     exit(64)
 }
 guard let pid = pid_t(args[1]) else {
@@ -183,6 +299,14 @@ case "dump":
     dumpUnnamed(pid: pid, surface: args[3])
 case "click":
     clickNamed(pid: pid, wanted: args[3])
+case "labels":
+    listLabels(pid: pid, prefix: args[3])
+case "press":
+    pressIdentifier(pid: pid, identifier: args[3])
+case "extras":
+    pressExtras(pid: pid)
+case "extras-label":
+    extrasLabel(pid: pid)
 default:
     FileHandle.standardError.write(Data("unknown command\n".utf8))
     exit(64)
