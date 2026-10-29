@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct PendingProcessAction: Identifiable {
@@ -58,15 +59,15 @@ struct DestructiveConfirmationCard: View {
                 HStack {
                     Spacer()
 
-                    Button("취소") {
-                        onCancel()
-                    }
-                    .focused($focused, equals: .cancel)
-                    .keyboardShortcut(.cancelAction)
+                    ConfirmationCancelButton(action: onCancel)
+                        .focused($focused, equals: .cancel)
+                        .keyboardShortcut(.cancelAction)
+                        .frame(minWidth: 72, minHeight: 22)
 
                     Button(action.kind == .terminate ? "종료" : "강제 종료", role: .destructive) {
                         onConfirm()
                     }
+                    .accessibilityLabel(action.kind == .terminate ? "종료" : "강제 종료")
                     .focused($focused, equals: .confirm)
                     .accessibilityIdentifier("watchdog.destructive-confirmation.confirm")
                 }
@@ -79,13 +80,65 @@ struct DestructiveConfirmationCard: View {
                     .strokeBorder(.separator.opacity(0.7))
             }
             .shadow(radius: 18, y: 8)
+            .focusSection()
             .defaultFocus($focused, .cancel)
         }
-        .onAppear {
+        .task {
             focused = .cancel
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("watchdog.destructive-confirmation")
+    }
+}
+
+private struct ConfirmationCancelButton: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = FocusableCancelButton(title: "취소", target: context.coordinator, action: #selector(Coordinator.click))
+        button.bezelStyle = .rounded
+        button.setButtonType(.momentaryPushIn)
+        button.keyEquivalent = "\u{1b}"
+        button.setAccessibilityLabel("취소")
+        button.setAccessibilityIdentifier("watchdog.destructive-confirmation.cancel")
+        button.refusesFirstResponder = false
+        return button
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        context.coordinator.action = action
+        nsView.setAccessibilityLabel("취소")
+        nsView.setAccessibilityIdentifier("watchdog.destructive-confirmation.cancel")
+        DispatchQueue.main.async {
+            nsView.window?.makeKeyAndOrderFront(nil)
+            nsView.window?.makeFirstResponder(nsView)
+            nsView.setAccessibilityFocused(true)
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc func click() {
+            action()
+        }
+    }
+}
+
+private final class FocusableCancelButton: NSButton {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.makeFirstResponder(self)
+        setAccessibilityFocused(true)
     }
 }
 

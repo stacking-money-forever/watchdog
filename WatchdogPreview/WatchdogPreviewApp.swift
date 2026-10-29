@@ -5,6 +5,7 @@ import SwiftUI
 struct WatchdogPreviewApp: App {
     @StateObject private var monitor: ProcessMonitor
     @StateObject private var launchAtLogin: LaunchAtLoginController
+    private let announcer: AccessibilityAnnouncer
 
     init() {
         let monitor = ProcessMonitor()
@@ -25,9 +26,11 @@ struct WatchdogPreviewApp: App {
 #endif
         _monitor = StateObject(wrappedValue: monitor)
         _launchAtLogin = StateObject(wrappedValue: launchAtLogin)
+        announcer = AccessibilityAnnouncer(monitor: monitor)
     }
 
     var body: some Scene {
+        let _ = announcer
         WindowGroup("Watchdog 미리보기") {
             WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
                 .frame(minWidth: 480, minHeight: 590)

@@ -103,6 +103,30 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
+    func testConfirmationCardFocusesCancelAndEscCancels() {
+        let app = launch(arguments: ["--ui-test-fixture"])
+        defer { app.terminate() }
+        openActionMenu(in: app)
+        let terminate = app.menuItems["\(actionableProcess).terminate"]
+        XCTAssertTrue(terminate.waitForExistence(timeout: 2))
+        terminate.click()
+
+        let title = app.staticTexts["프로세스를 종료할까요?"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        let cancel = app.windows.firstMatch.buttons["취소"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 2))
+        var focused = searchFieldHasFocus(cancel)
+        for _ in 0..<20 where !focused {
+            Thread.sleep(forTimeInterval: 0.1)
+            focused = searchFieldHasFocus(cancel)
+        }
+        XCTAssertTrue(focused, "cancel should take keyboard focus when the confirmation card opens")
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(title.waitForNonExistence(timeout: 2))
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
+    }
+
+    @MainActor
     func testTerminateConfirmationCanBeReachedAndCancelledWithoutSendingSignal() {
         let app = launch(arguments: ["--ui-test-fixture"])
         defer { app.terminate() }

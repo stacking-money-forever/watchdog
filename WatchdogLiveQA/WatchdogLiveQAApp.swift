@@ -11,6 +11,7 @@ private struct LiveQALaunchAtLoginService: LaunchAtLoginServicing {
 struct WatchdogLiveQAApp: App {
     @StateObject private var monitor: ProcessMonitor
     @StateObject private var launchAtLogin: LaunchAtLoginController
+    private let announcer: AccessibilityAnnouncer
 
     @MainActor
     init() {
@@ -24,9 +25,11 @@ struct WatchdogLiveQAApp: App {
         monitor.start()
         _monitor = StateObject(wrappedValue: monitor)
         _launchAtLogin = StateObject(wrappedValue: launchAtLogin)
+        announcer = AccessibilityAnnouncer(monitor: monitor)
     }
 
     var body: some Scene {
+        let _ = announcer
         WindowGroup("Watchdog Live QA") {
             WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
                 .frame(minWidth: 480, minHeight: 590)

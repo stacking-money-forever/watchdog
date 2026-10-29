@@ -33,6 +33,8 @@ struct WatchdogMenuView: View {
     /// Rendering nothing while closed lets the graph go idle; @State above
     /// (a pending confirmation included) is kept.
     @State private var isShown = false
+    @FocusState private var focusedRow: WatchdogFocusTarget?
+    @State private var focusAfterConfirmation: WatchdogFocusTarget?
 
     private let sessionLimit = 8
     private let orphanLimit = 3
@@ -65,12 +67,22 @@ struct WatchdogMenuView: View {
                         onConfirm: {
                             self.pendingAction = nil
                             completeDestructiveAction(pendingAction)
+                            restoreFocusAfterConfirmation()
                         }
                     )
                 }
             } else {
                 Color.clear
             }
+        }
+        .background {
+            Button("감지 규칙") {
+                openWindow(section: .rules)
+            }
+            .keyboardShortcut(",", modifiers: .command)
+            .opacity(0)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
         }
         .dismissInvalidDestructiveConfirmation(pendingAction: $pendingAction, monitor: monitor) { pending, stillListed in
             let message = stillListed
@@ -83,6 +95,17 @@ struct WatchdogMenuView: View {
             monitor.isPresented = true
             monitor.refreshNotificationAuthorization()
             launchAtLogin.refresh()
+            if focusedRow == nil, pendingAction == nil {
+                focusedRow = firstFocusTarget()
+            }
+        }
+        .onKeyPress(.upArrow) {
+            moveFocus(.up)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            moveFocus(.down)
+            return .handled
         }
         .onDisappear {
             isShown = false
@@ -306,6 +329,7 @@ struct WatchdogMenuView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .frame(width: 16)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 Text(recentActionTitle(entry))
                     .font(.system(size: 12, weight: .medium))
@@ -329,6 +353,8 @@ struct WatchdogMenuView: View {
         .padding(.vertical, 2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("watchdog.recent.\(entry.id.uuidString).row")
+        .focused($focusedRow, equals: .journal(entry.id))
+        .focusable()
     }
 
     private func sessionRow(for session: AgentSession) -> some View {
@@ -357,7 +383,9 @@ struct WatchdogMenuView: View {
                     memberRow: { member in
                         processRow(for: member, compact: true)
                     },
-                    onShowInWindow: { openWindow(section: .sessions) }
+                    onShowInWindow: { openWindow(section: .sessions) },
+                    focusedRow: $focusedRow,
+                    focusTarget: .session(session.id)
                 )
             }
         }
@@ -381,7 +409,9 @@ struct WatchdogMenuView: View {
             },
             onIgnore: { monitor.ignoreUntilExit(process) },
             onUndoIgnore: { monitor.undoIgnore(process) },
-            compact: compact
+            compact: compact,
+            focusedRow: $focusedRow,
+            focusTarget: .process(process.identity)
         )
     }
 
@@ -398,8 +428,8 @@ struct WatchdogMenuView: View {
                 openWindow(section: .settings)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("설정")
             .accessibilityIdentifier("watchdog.open-settings")
-            .keyboardShortcut(",", modifiers: .command)
 
             Spacer()
 
@@ -420,6 +450,7 @@ struct WatchdogMenuView: View {
                 NSApplication.shared.terminate(nil)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Watchdog 종료")
             .accessibilityIdentifier("watchdog.quit")
         }
         .font(.caption)
@@ -435,14 +466,17 @@ struct WatchdogMenuView: View {
             if monitor.isRefreshing {
                 ProgressView()
                     .controlSize(.small)
+                    .accessibilityHidden(true)
             } else {
                 Image(systemName: "arrow.clockwise")
+                    .accessibilityHidden(true)
             }
         }
         .buttonStyle(.plain)
         .disabled(monitor.isRefreshing)
         .help("지금 새로고침")
         .accessibilityLabel("지금 새로고침")
+        .keyboardShortcut("r", modifiers: .command)
     }
 
     private var currentFeedback: (message: String, isError: Bool)? {
@@ -484,6 +518,7 @@ struct WatchdogMenuView: View {
     private func feedbackBanner(_ message: String, isError: Bool) -> some View {
         HStack(spacing: 7) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .accessibilityHidden(true)
             Text(message)
                 .lineLimit(2)
             Spacer(minLength: 0)
@@ -562,6 +597,8 @@ struct WatchdogMenuView: View {
     ) {
         do {
             let request = try monitor.destructiveActionRequest(action, for: process)
+            focusAfterConfirmation = focusedRow ?? .process(process.identity)
+            focusedRow = nil
             pendingAction = PendingProcessAction(
                 process: process,
                 kind: kind,
@@ -599,6 +636,40 @@ struct WatchdogMenuView: View {
     private func cancelDestructiveAction(_ pending: PendingProcessAction) {
         pendingAction = nil
         monitor.cancelDestructiveConfirmation(pending.confirmationRequest)
+        restoreFocusAfterConfirmation()
+    }
+
+    private func restoreFocusAfterConfirmation() {
+        focusedRow = focusAfterConfirmation
+        focusAfterConfirmation = nil
+    }
+
+    private func focusOrder() -> [WatchdogFocusTarget] {
+        var order: [WatchdogFocusTarget] = monitor.visibleSessions(limit: sessionLimit).map { .session($0.id) }
+        order.append(contentsOf: monitor.orphans(limit: orphanLimit).map { .process($0.identity) })
+        order.append(contentsOf: Array(monitor.journalEntries.prefix(recentLimit)).map { .journal($0.id) })
+        return order
+    }
+
+    private func firstFocusTarget() -> WatchdogFocusTarget? {
+        focusOrder().first
+    }
+
+    private func moveFocus(_ direction: MoveCommandDirection) {
+        let order = focusOrder()
+        guard !order.isEmpty else { return }
+        guard let current = focusedRow, let index = order.firstIndex(of: current) else {
+            focusedRow = order.first
+            return
+        }
+        switch direction {
+        case .up:
+            if index > 0 { focusedRow = order[index - 1] }
+        case .down:
+            if index + 1 < order.count { focusedRow = order[index + 1] }
+        default:
+            break
+        }
     }
 
     private func actionOutcome(for process: ProcessSnapshot) -> ProcessActionOutcome? {

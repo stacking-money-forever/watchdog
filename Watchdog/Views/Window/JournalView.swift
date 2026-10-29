@@ -6,6 +6,7 @@ struct JournalView: View {
     @ObservedObject var monitor: ProcessMonitor
     @State private var reloadTask: Task<Void, Never>?
     @State private var selection: ActionJournalEntry.ID?
+    @FocusState private var tableFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -28,6 +29,7 @@ struct JournalView: View {
                 .keyboardShortcut("z", modifiers: .command)
                 .disabled(latestUndoable == nil)
                 .help(latestUndoable == nil ? "이미 재개됐거나 종료된 프로세스입니다" : "가장 최근 일시 정지를 되돌립니다")
+                .accessibilityLabel("되돌리기")
             }
         }
         .onAppear(perform: startReloading)
@@ -44,6 +46,7 @@ struct JournalView: View {
             }
             Spacer()
             Button("JSON 내보내기", action: exportJSON)
+                .accessibilityLabel("JSON 내보내기")
                 .accessibilityIdentifier("watchdog.journal.export")
         }
     }
@@ -98,6 +101,7 @@ struct JournalView: View {
                 HStack {
                     Button("되돌리기") {
                         selection = entry.id
+                        tableFocused = true
                         monitor.undo(entry)
                     }
                     .controlSize(.small)
@@ -110,6 +114,10 @@ struct JournalView: View {
             }
             .width(min: 84, ideal: 96)
         }
+        .focused($tableFocused)
+        .onChange(of: selection) { _, _ in
+            tableFocused = true
+        }
     }
 
     private var latestUndoable: ActionJournalEntry? {
@@ -119,6 +127,7 @@ struct JournalView: View {
     private func undoLatest() {
         guard let entry = latestUndoable else { return }
         selection = entry.id
+        tableFocused = true
         monitor.undo(entry)
     }
 

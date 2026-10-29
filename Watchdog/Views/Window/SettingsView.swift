@@ -35,6 +35,7 @@ struct SettingsView: View {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(cliPath, forType: .string)
                         }
+                        .accessibilityLabel("경로 복사")
                         Text("터미널에서 쓰려면 ./scripts/install.sh --link-cli 또는 이 경로를 PATH에 추가")
                             .font(.caption)
                             .foregroundStyle(.secondary)

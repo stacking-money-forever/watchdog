@@ -47,6 +47,9 @@ private enum WatchdogUITestFixtureHost {
         )
         window.title = "Watchdog UI 테스트"
         window.contentView = hosting
+        window.standardWindowButton(.closeButton)?.setAccessibilityLabel("닫기")
+        window.standardWindowButton(.miniaturizeButton)?.setAccessibilityLabel("최소화")
+        window.standardWindowButton(.zoomButton)?.setAccessibilityLabel("확대/축소")
         window.center()
         window.makeKeyAndOrderFront(nil)
         Self.window = window
@@ -299,6 +302,7 @@ struct WatchdogApp: App {
     // label listens to menuBarIconState alone.
     @State private var monitor: ProcessMonitor
     @StateObject private var launchAtLogin: LaunchAtLoginController
+    private let announcer: AccessibilityAnnouncer
     private let showsFixtureWindow: Bool
 
     @MainActor
@@ -411,12 +415,14 @@ struct WatchdogApp: App {
         #endif
         _monitor = State(initialValue: monitor)
         _launchAtLogin = StateObject(wrappedValue: launchAtLogin)
+        announcer = AccessibilityAnnouncer(monitor: monitor)
         showsFixtureWindow = shouldShowFixtureWindow
         appDelegate.launchAtLoginController = launchAtLogin
         appDelegate.monitor = monitor
     }
 
     var body: some Scene {
+        let _ = announcer
         MenuBarExtra {
             // A MenuBarExtra window sizes to its content's ideal height, and the
             // process list is a ScrollView whose ideal height is effectively zero.

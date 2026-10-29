@@ -97,6 +97,7 @@ struct SessionsView: View {
     @State private var selection: SessionTableNode.ID?
     @State private var pendingAction: PendingProcessAction?
     @State private var localActionFailures: [ProcessIdentity: LocalActionFailure] = [:]
+    @FocusState private var tableFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -128,6 +129,7 @@ struct SessionsView: View {
                     onConfirm: {
                         self.pendingAction = nil
                         completeDestructiveAction(pendingAction)
+                        tableFocused = true
                     }
                 )
             }
@@ -156,7 +158,6 @@ struct SessionsView: View {
             }
             Spacer()
             refreshButton
-                .keyboardShortcut("r", modifiers: .command)
         }
     }
 
@@ -221,6 +222,7 @@ struct SessionsView: View {
             .width(min: 108, ideal: 120)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .focused($tableFocused)
         .animation(reduceMotion ? nil : .default, value: monitor.sessions.map(\.id))
         .contextMenu(forSelectionType: SessionTableNode.ID.self) { ids in
             if let id = ids.first, let node = node(for: id), let process = process(for: node) {
@@ -346,8 +348,10 @@ struct SessionsView: View {
             if monitor.isRefreshing {
                 ProgressView()
                     .controlSize(.small)
+                    .accessibilityHidden(true)
             } else {
                 Image(systemName: "arrow.clockwise")
+                    .accessibilityHidden(true)
             }
         }
         .buttonStyle(.borderless)
@@ -360,6 +364,7 @@ struct SessionsView: View {
     private func feedbackBanner(_ message: String, isError: Bool) -> some View {
         HStack(spacing: 7) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .accessibilityHidden(true)
             Text(message)
                 .lineLimit(2)
             Spacer(minLength: 0)
@@ -557,7 +562,13 @@ struct SessionsView: View {
         let row = outline.selectedRow
         guard row >= 0 else { return }
         let item = outline.item(atRow: row)
-        if outline.isItemExpanded(item) {
+        if reduceMotion {
+            if outline.isItemExpanded(item) {
+                outline.collapseItem(item)
+            } else {
+                outline.expandItem(item)
+            }
+        } else if outline.isItemExpanded(item) {
             outline.animator().collapseItem(item)
         } else {
             outline.animator().expandItem(item)
@@ -580,6 +591,7 @@ struct SessionsView: View {
     ) {
         do {
             let request = try monitor.destructiveActionRequest(action, for: process)
+            tableFocused = false
             pendingAction = PendingProcessAction(
                 process: process,
                 kind: kind,
@@ -604,6 +616,7 @@ struct SessionsView: View {
     private func cancelDestructiveAction(_ pending: PendingProcessAction) {
         pendingAction = nil
         monitor.cancelDestructiveConfirmation(pending.confirmationRequest)
+        tableFocused = true
     }
 
     private func actionOutcome(for process: ProcessSnapshot) -> ProcessActionOutcome? {

@@ -8,6 +8,8 @@ struct NotificationAndLoginControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("시스템 알림", isOn: $monitor.notificationsEnabled)
+                .accessibilityLabel("시스템 알림")
+                .accessibilityValue(monitor.notificationsEnabled ? "켬" : "끔")
                 .accessibilityIdentifier("watchdog.settings.notifications")
             if monitor.notificationAuthorization == .denied {
                 HStack {
@@ -30,6 +32,8 @@ struct NotificationAndLoginControls: View {
                     set: { launchAtLogin.setEnabled($0) }
                 )
             )
+            .accessibilityLabel("로그인 시 자동 실행")
+            .accessibilityValue(launchAtLogin.isEnabled ? "켬" : "끔")
             .accessibilityIdentifier("watchdog.settings.login")
             if launchAtLogin.requiresApproval {
                 Text("시스템 설정의 로그인 항목에서 승인이 필요합니다")

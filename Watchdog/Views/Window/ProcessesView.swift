@@ -202,6 +202,7 @@ struct ProcessesView: View {
     @State private var pendingAction: PendingProcessAction?
     @State private var localActionFailures: [ProcessIdentity: LocalActionFailure] = [:]
     @FocusState private var searchFocused: Bool
+    @FocusState private var tableFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -233,6 +234,7 @@ struct ProcessesView: View {
                     onConfirm: {
                         self.pendingAction = nil
                         completeDestructiveAction(pendingAction)
+                        tableFocused = true
                     }
                 )
             }
@@ -269,6 +271,23 @@ struct ProcessesView: View {
             searchText = ""
             return .handled
         }
+        .onKeyPress(.space) {
+            performPrimaryAction()
+            return .handled
+        }
+        .onReceive(NotificationCenter.default.publisher(for: WatchdogWindowOpener.focusProcessSearch)) { _ in
+            searchFocused = true
+        }
+    }
+
+    private func performPrimaryAction() {
+        guard let selection, let process = process(for: selection) else { return }
+        guard monitor.actionability(of: process).canAct else { return }
+        if process.isSuspended {
+            monitor.resume(process)
+        } else {
+            monitor.suspend(process)
+        }
     }
 
     private var header: some View {
@@ -281,23 +300,14 @@ struct ProcessesView: View {
                     .foregroundStyle(.secondary)
                 sortMenu
                 refreshButton
-                    .keyboardShortcut("r", modifiers: .command)
             }
 
             HStack(spacing: 8) {
                 TextField("프로세스, PID 또는 프로젝트 검색", text: $searchText)
                     .textFieldStyle(.roundedBorder)
                     .focused($searchFocused)
+                    .accessibilityLabel("프로세스, PID 또는 프로젝트 검색")
                     .accessibilityIdentifier("watchdog.processes.search")
-                    .background {
-                        Button("검색") {
-                            searchFocused = true
-                        }
-                        .keyboardShortcut("f", modifiers: .command)
-                        .opacity(0)
-                        .accessibilityHidden(true)
-                        .allowsHitTesting(false)
-                    }
                 if !searchText.isEmpty {
                     Button {
                         searchText = ""
@@ -321,6 +331,8 @@ struct ProcessesView: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            .accessibilityLabel("프로세스 필터")
+            .accessibilityValue(filter.rawValue)
             .accessibilityIdentifier("watchdog.processes.filter")
         }
     }
@@ -339,6 +351,7 @@ struct ProcessesView: View {
         .fixedSize()
         .help("목록 정렬")
         .accessibilityLabel("정렬")
+        .accessibilityValue(sort.rawValue)
         .accessibilityIdentifier("watchdog.processes.sort")
     }
 
@@ -397,6 +410,7 @@ struct ProcessesView: View {
             .width(min: 64, ideal: 80)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
+        .focused($tableFocused)
         .animation(reduceMotion ? nil : .default, value: displayed.map(ProcessesPresentation.rowIdentifier))
         .contextMenu(forSelectionType: ProcessTableRow.ID.self) { ids in
             if let id = ids.first, let process = process(for: id) {
@@ -497,8 +511,10 @@ struct ProcessesView: View {
             if monitor.isRefreshing {
                 ProgressView()
                     .controlSize(.small)
+                    .accessibilityHidden(true)
             } else {
                 Image(systemName: "arrow.clockwise")
+                    .accessibilityHidden(true)
             }
         }
         .buttonStyle(.borderless)
@@ -511,6 +527,7 @@ struct ProcessesView: View {
     private func feedbackBanner(_ message: String, isError: Bool) -> some View {
         HStack(spacing: 7) {
             Image(systemName: isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .accessibilityHidden(true)
             Text(message)
                 .lineLimit(2)
             Spacer(minLength: 0)
@@ -606,6 +623,7 @@ struct ProcessesView: View {
     ) {
         do {
             let request = try monitor.destructiveActionRequest(action, for: process)
+            tableFocused = false
             pendingAction = PendingProcessAction(
                 process: process,
                 kind: kind,
@@ -630,6 +648,7 @@ struct ProcessesView: View {
     private func cancelDestructiveAction(_ pending: PendingProcessAction) {
         pendingAction = nil
         monitor.cancelDestructiveConfirmation(pending.confirmationRequest)
+        tableFocused = true
     }
 
     private func actionOutcome(for process: ProcessSnapshot) -> ProcessActionOutcome? {

@@ -14,6 +14,8 @@ struct ProcessRow: View {
     let onIgnore: () -> Void
     let onUndoIgnore: () -> Void
     var compact = false
+    var focusedRow: FocusState<WatchdogFocusTarget?>.Binding
+    var focusTarget: WatchdogFocusTarget
 
     var body: some View {
         HStack(spacing: compact ? 8 : 10) {
@@ -130,12 +132,13 @@ struct ProcessRow: View {
                                 Color.secondary.opacity(actionability.canAct ? 0.12 : 0.06),
                                 in: Circle()
                             )
-                            .accessibilityLabel("프로세스 작업")
+                            .accessibilityHidden(true)
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
                     .disabled(!actionability.canAct)
                     .help(actionability.canAct ? "프로세스 작업" : nonActionableReason)
+                    .accessibilityLabel("프로세스 작업")
                     .accessibilityHint(actionability.canAct ? "" : nonActionableReason)
                     .accessibilityIdentifier(controlIdentifier("actions"))
                 }
@@ -150,6 +153,17 @@ struct ProcessRow: View {
         .accessibilityValue(accessibilityValue)
         .accessibilityHint(actionability.canAct ? "프로세스 제어를 사용할 수 있습니다" : nonActionableReason)
         .accessibilityIdentifier(controlIdentifier("row"))
+        .focused(focusedRow, equals: focusTarget)
+        .focusable()
+        .onKeyPress(.space) {
+            guard actionability.canAct else { return .ignored }
+            if process.isSuspended {
+                onResume()
+            } else {
+                onSuspend()
+            }
+            return .handled
+        }
     }
 
     @ViewBuilder
@@ -171,6 +185,7 @@ struct ProcessRow: View {
             .padding(.horizontal, 5)
             .padding(.vertical, 2)
             .background(color.opacity(0.12), in: Capsule())
+            .accessibilityLabel(text)
     }
 
     private var metadata: String {

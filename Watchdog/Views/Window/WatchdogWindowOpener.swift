@@ -8,6 +8,7 @@ enum WatchdogWindowOpener {
     static var pendingOpen = false
     static var pendingSection: WindowSection?
     static let sectionDidChange = Notification.Name("WatchdogWindowSectionDidChange")
+    static let focusProcessSearch = Notification.Name("dev.justn.watchdog.focus-process-search")
     static var openWindowAction: ((String) -> Void)? {
         didSet {
             guard pendingOpen, openWindowAction != nil else { return }
@@ -43,6 +44,10 @@ enum WatchdogWindowOpener {
         }
         match?.identifier = NSUserInterfaceItemIdentifier("main")
         match?.setAccessibilityIdentifier("watchdog.window")
+        match?.standardWindowButton(.closeButton)?.setAccessibilityLabel("닫기")
+        match?.standardWindowButton(.miniaturizeButton)?.setAccessibilityLabel("최소화")
+        match?.standardWindowButton(.zoomButton)?.setAccessibilityLabel("확대/축소")
+        match?.standardWindowButton(.toolbarButton)?.setAccessibilityLabel("도구 막대")
         match?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }

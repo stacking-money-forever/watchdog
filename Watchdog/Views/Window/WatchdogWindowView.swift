@@ -11,6 +11,7 @@ struct WatchdogWindowView: View {
                 ForEach(WindowSection.allCases) { section in
                     Label(section.title, systemImage: section.symbolName)
                         .tag(section)
+                        .accessibilityLabel(section.title)
                         .accessibilityIdentifier(section.accessibilityIdentifier)
                 }
             }
@@ -35,6 +36,7 @@ struct WatchdogWindowView: View {
         .frame(minWidth: 680, minHeight: 420)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("watchdog.window")
+        .background(windowKeyboardCommands)
         .onAppear {
             applyPendingSection()
             WatchdogWindowOpener.bringMainWindowForward()
@@ -50,6 +52,28 @@ struct WatchdogWindowView: View {
                 WatchdogWindowOpener.pendingSection = nil
             }
         }
+    }
+
+    private var windowKeyboardCommands: some View {
+        VStack {
+            Button("검색") {
+                selectedSection = .processes
+                NotificationCenter.default.post(name: WatchdogWindowOpener.focusProcessSearch, object: nil)
+            }
+            .keyboardShortcut("f", modifiers: .command)
+            Button("지금 새로고침") {
+                Task { await monitor.refreshNow() }
+            }
+            .keyboardShortcut("r", modifiers: .command)
+            Button("감지 규칙") {
+                selectedSection = .rules
+            }
+            .keyboardShortcut(",", modifiers: .command)
+        }
+        .frame(width: 0, height: 0)
+        .opacity(0)
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
 
     private func applyPendingSection() {
