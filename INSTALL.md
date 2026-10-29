@@ -7,25 +7,25 @@
 | 항목 | 값 |
 |---|---|
 | 지원 OS | macOS 14 이상 |
-| 현재 배포 | `v0.2.6` |
-| 공식 릴리스 | <https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.6> |
+| 현재 배포 | `v0.2.7` |
+| 공식 릴리스 | <https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.7> |
 | 기본 설치 위치 | `~/Applications/Watchdog.app` 또는 `/Applications/Watchdog.app` |
 | 앱 식별자 | `dev.justn.watchdog` |
 
 공식 파일 SHA-256:
 
 ```text
-Watchdog-0.2.6-macos.zip  0332b90641336edcef36b5e21ee2068c8b009c2d91576fe58e0a06837277251c
-Watchdog-0.2.6-macos.dmg  fd07e1fe5645a13c93e452a9344ab52299a5a142d58194f1d419c52f7497c92f
+Watchdog-0.2.7-macos.zip  b9207305d1f612da6ea3d4fc5a05af43f1bcd1a0b0f834aff214a16aab381cd3
+Watchdog-0.2.7-macos.dmg  36d1c7a0dcefb0fbba503eb8352d81d45061db570b249c11b7cb4effbccb0f0e
 ```
 
 ## 사람용: DMG로 설치
 
-1. [공식 릴리스](https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.6)에서 `Watchdog-0.2.6-macos.dmg`를 내려받습니다.
+1. [공식 릴리스](https://github.com/stacking-money-forever/watchdog/releases/tag/v0.2.7)에서 `Watchdog-0.2.7-macos.dmg`를 내려받습니다.
 2. 선택적으로 무결성을 확인합니다.
 
    ```bash
-   shasum -a 256 ~/Downloads/Watchdog-0.2.6-macos.dmg
+   shasum -a 256 ~/Downloads/Watchdog-0.2.7-macos.dmg
    ```
 
 3. DMG를 열고 Watchdog을 Applications 바로가기로 드래그합니다.
@@ -96,10 +96,10 @@ pgrep -fl "$APP/Contents/MacOS/Watchdog"
 
 ```text
 CFBundleIdentifier: dev.justn.watchdog
-CFBundleShortVersionString: 0.2.6
+CFBundleShortVersionString: 0.2.7
 ```
 
-공식 `v0.2.6` 파일은 `codesign --verify` 구조 검증을 통과하지만 서명은 ad-hoc(TeamIdentifier=not set)이며 공증·스테이플링되어 있지 않습니다. 따라서 `spctl --assess`가 거부하는 것이 예상된 상태입니다.
+공식 `v0.2.7` 파일은 `codesign --verify` 구조 검증을 통과하지만 서명은 ad-hoc(TeamIdentifier=not set)이며 공증·스테이플링되어 있지 않습니다. 따라서 `spctl --assess`가 거부하는 것이 예상된 상태입니다.
 
 ### CLI 확인
 

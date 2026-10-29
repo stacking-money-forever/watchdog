@@ -14,17 +14,17 @@ Watchdog는 폭주하거나 고아가 된 프로세스를 터미널 명령 없�
 
 우클릭으로 열리지 않으면 한 번 실행을 시도한 뒤 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 선택합니다. 이는 Apple이 제공하는 앱별 승인 절차입니다. 전역 Gatekeeper 비활성화나 격리 속성 제거는 필요하지 않습니다.
 
-공식 배포 파일은 이 저장소의 Releases에서만 제공합니다. `v0.2.6` 파일 무결성:
+공식 배포 파일은 이 저장소의 Releases에서만 제공합니다. `v0.2.7` 파일 무결성:
 
 ```text
-Watchdog-0.2.6-macos.zip  0332b90641336edcef36b5e21ee2068c8b009c2d91576fe58e0a06837277251c
-Watchdog-0.2.6-macos.dmg  fd07e1fe5645a13c93e452a9344ab52299a5a142d58194f1d419c52f7497c92f
+Watchdog-0.2.7-macos.zip  b9207305d1f612da6ea3d4fc5a05af43f1bcd1a0b0f834aff214a16aab381cd3
+Watchdog-0.2.7-macos.dmg  36d1c7a0dcefb0fbba503eb8352d81d45061db570b249c11b7cb4effbccb0f0e
 ```
 
 검증 명령:
 
 ```bash
-shasum -a 256 Watchdog-0.2.6-macos.dmg
+shasum -a 256 Watchdog-0.2.7-macos.dmg
 ```
 
 ### 에이전트·터미널에서 설치
