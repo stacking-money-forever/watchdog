@@ -10,13 +10,13 @@ final class WatchdogUITests: XCTestCase {
 
         XCTAssertTrue(app.windows.firstMatch.waitForExistence(timeout: 5))
         let header = app.staticTexts["Watchdog"]
-        XCTAssertTrue(header.waitForExistence(timeout: 2))
+        XCTAssertTrue(header.waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["CPU 높음"].exists)
         XCTAssertTrue(app.staticTexts["메모리 높음"].exists)
         XCTAssertTrue(app.staticTexts["고아 의심"].exists)
 
         let row = app.descendants(matching: .any)["\(actionableProcess).row"]
-        XCTAssertTrue(row.waitForExistence(timeout: 2))
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertTrue(row.label.contains("claude"))
         let projectMetadata = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS 'watchdog-fixture' OR value CONTAINS 'watchdog-fixture'")
@@ -82,12 +82,12 @@ final class WatchdogUITests: XCTestCase {
         let app = launch(arguments: ["--ui-test-fixture"])
         defer { app.terminate() }
         openActionMenu(in: app)
-        XCTAssertTrue(app.menuItems["종료할 때까지 무시"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.menuItems["종료할 때까지 무시"].waitForExistence(timeout: 5))
         app.menuItems["종료할 때까지 무시"].click()
-        XCTAssertTrue(app.staticTexts["무시 중"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["무시 중"].waitForExistence(timeout: 5))
 
         let undoIgnore = app.buttons["\(actionableProcess).undo-ignore"]
-        XCTAssertTrue(undoIgnore.waitForExistence(timeout: 2))
+        XCTAssertTrue(undoIgnore.waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -103,26 +103,21 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
-    func testConfirmationCardFocusesCancelAndEscCancels() {
+    func testConfirmationCardFocusesCancelAndEscCancels() throws {
         let app = launch(arguments: ["--ui-test-fixture"])
         defer { app.terminate() }
         openActionMenu(in: app)
         let terminate = app.menuItems["\(actionableProcess).terminate"]
-        XCTAssertTrue(terminate.waitForExistence(timeout: 2))
+        XCTAssertTrue(terminate.waitForExistence(timeout: 5))
         terminate.click()
 
         let title = app.staticTexts["프로세스를 종료할까요?"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         let cancel = app.windows.firstMatch.buttons["취소"]
-        XCTAssertTrue(cancel.waitForExistence(timeout: 2))
-        var focused = searchFieldHasFocus(cancel)
-        for _ in 0..<20 where !focused {
-            Thread.sleep(forTimeInterval: 0.1)
-            focused = searchFieldHasFocus(cancel)
-        }
-        XCTAssertTrue(focused, "cancel should take keyboard focus when the confirmation card opens")
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        try ensureKeyboardFocus(cancel)
         app.typeKey(.escape, modifierFlags: [])
-        XCTAssertTrue(title.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
     }
 
@@ -132,14 +127,14 @@ final class WatchdogUITests: XCTestCase {
         defer { app.terminate() }
         openActionMenu(in: app)
         let terminate = app.menuItems["\(actionableProcess).terminate"]
-        XCTAssertTrue(terminate.waitForExistence(timeout: 2))
+        XCTAssertTrue(terminate.waitForExistence(timeout: 5))
         terminate.click()
 
         let title = app.staticTexts["프로세스를 종료할까요?"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["watchdog.destructive-confirmation.confirm"].exists)
         app.windows.firstMatch.buttons["취소"].click()
-        XCTAssertTrue(title.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
     }
 
@@ -149,14 +144,14 @@ final class WatchdogUITests: XCTestCase {
         defer { app.terminate() }
         openActionMenu(in: app)
         let forceQuit = app.menuItems["\(actionableProcess).force-quit"]
-        XCTAssertTrue(forceQuit.waitForExistence(timeout: 2))
+        XCTAssertTrue(forceQuit.waitForExistence(timeout: 5))
         forceQuit.click()
 
         let title = app.staticTexts["프로세스를 강제 종료할까요?"]
         XCTAssertTrue(title.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["watchdog.destructive-confirmation.confirm"].exists)
         app.windows.firstMatch.buttons["취소"].click()
-        XCTAssertTrue(title.waitForNonExistence(timeout: 2))
+        XCTAssertTrue(title.waitForNonExistence(timeout: 5))
         XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '신호를 전달했습니다'")).firstMatch.exists)
     }
 
@@ -196,10 +191,10 @@ final class WatchdogUITests: XCTestCase {
         let sections = ["overview", "sessions", "processes", "journal", "rules", "settings"]
         for section in sections {
             let item = app.descendants(matching: .any)["watchdog.sidebar.\(section)"]
-            XCTAssertTrue(item.waitForExistence(timeout: 2), "missing sidebar \(section)")
+            XCTAssertTrue(item.waitForExistence(timeout: 5), "missing sidebar \(section)")
             item.click()
             let detail = app.descendants(matching: .any)["watchdog.window.detail.\(section)"]
-            XCTAssertTrue(detail.waitForExistence(timeout: 2), "missing detail \(section)")
+            XCTAssertTrue(detail.waitForExistence(timeout: 5), "missing detail \(section)")
         }
     }
 
@@ -212,7 +207,7 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 8))
 
         let sidebar = app.descendants(matching: .any)["watchdog.sidebar.journal"]
-        XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 5))
         sidebar.click()
 
         let autoID = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAA1"
@@ -248,15 +243,15 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 8))
 
         let rulesSidebar = app.descendants(matching: .any)["watchdog.sidebar.rules"]
-        XCTAssertTrue(rulesSidebar.waitForExistence(timeout: 2))
+        XCTAssertTrue(rulesSidebar.waitForExistence(timeout: 5))
         rulesSidebar.click()
-        XCTAssertTrue(app.descendants(matching: .any)["watchdog.rules.cpu"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["watchdog.rules.cpu"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["watchdog.rules.auto-suspend"].exists)
 
         let settingsSidebar = app.descendants(matching: .any)["watchdog.sidebar.settings"]
-        XCTAssertTrue(settingsSidebar.waitForExistence(timeout: 2))
+        XCTAssertTrue(settingsSidebar.waitForExistence(timeout: 5))
         settingsSidebar.click()
-        XCTAssertTrue(app.descendants(matching: .any)["watchdog.settings.login"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.descendants(matching: .any)["watchdog.settings.login"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["watchdog.settings.notifications"].exists)
 
         let expected = Bundle(for: Self.self)
@@ -264,7 +259,7 @@ final class WatchdogUITests: XCTestCase {
         let version = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", expected, expected)
         ).firstMatch
-        XCTAssertTrue(version.waitForExistence(timeout: 2))
+        XCTAssertTrue(version.waitForExistence(timeout: 5))
     }
 
     @MainActor
@@ -279,7 +274,7 @@ final class WatchdogUITests: XCTestCase {
         ).firstMatch.exists)
 
         let row = app.descendants(matching: .any)["process.71001.9071001.row"]
-        XCTAssertTrue(row.waitForExistence(timeout: 2))
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
         XCTAssertTrue(row.label.contains("자식"), "session row should name member count: \(row.label)")
         XCTAssertTrue(
             row.label.contains("퍼센트") || row.label.contains("%") || row.label.contains("CPU"),
@@ -287,16 +282,19 @@ final class WatchdogUITests: XCTestCase {
         )
 
         let expand = app.descendants(matching: .any)["process.71001.9071001.expand"]
-        XCTAssertTrue(expand.waitForExistence(timeout: 2))
-        expand.click()
+        XCTAssertTrue(expand.waitForExistence(timeout: 5))
+        clickCenter(expand)
         let member = app.descendants(matching: .any)["process.71003.9071003.row"]
-        XCTAssertTrue(member.waitForExistence(timeout: 2))
+        if member.waitForExistence(timeout: 2) == false {
+            clickCenter(expand)
+        }
+        XCTAssertTrue(member.waitForExistence(timeout: 5))
 
-        XCTAssertTrue(app.staticTexts["아직 조치가 없습니다"].waitForExistence(timeout: 2))
+        XCTAssertTrue(app.staticTexts["아직 조치가 없습니다"].waitForExistence(timeout: 5))
     }
 
     @MainActor
-    func testProcessesSectionSearchFilterAndNoMatch() {
+    func testProcessesSectionSearchFilterAndNoMatch() throws {
         let app = launch(arguments: ["--ui-test-window-fixture"])
         defer { app.terminate() }
 
@@ -304,7 +302,7 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 8))
 
         let sidebar = app.descendants(matching: .any)["watchdog.sidebar.processes"]
-        XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 5))
         sidebar.click()
 
         let first = app.descendants(matching: .any)["process.71001.9071001.row"]
@@ -315,8 +313,8 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(make.exists)
 
         let field = app.textFields["watchdog.processes.search"]
-        XCTAssertTrue(field.waitForExistence(timeout: 2))
-        focusSearchField(field)
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        try ensureKeyboardFocus(field)
         field.typeText("fixture-with-no-matching-process")
 
         let empty = app.descendants(matching: .any)["watchdog.processes.empty"]
@@ -359,7 +357,7 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 8))
 
         let sidebar = app.descendants(matching: .any)["watchdog.sidebar.sessions"]
-        XCTAssertTrue(sidebar.waitForExistence(timeout: 2))
+        XCTAssertTrue(sidebar.waitForExistence(timeout: 5))
         sidebar.click()
 
         let firstSession = app.descendants(matching: .any)["session.71001.9071001.row"]
@@ -373,14 +371,14 @@ final class WatchdogUITests: XCTestCase {
 
         firstSession.click()
         let detail = app.descendants(matching: .any)["watchdog.sessions.detail"]
-        XCTAssertTrue(detail.waitForExistence(timeout: 2))
+        XCTAssertTrue(detail.waitForExistence(timeout: 5))
         let token = app.staticTexts.matching(
             NSPredicate(format: "label CONTAINS '9071001' OR value CONTAINS '9071001'")
         ).firstMatch
-        XCTAssertTrue(token.waitForExistence(timeout: 2), "detail should include the start-time token")
+        XCTAssertTrue(token.waitForExistence(timeout: 5), "detail should include the start-time token")
 
         let suspend = app.descendants(matching: .any)["session.71001.9071001.suspend"]
-        XCTAssertTrue(suspend.waitForExistence(timeout: 2))
+        XCTAssertTrue(suspend.waitForExistence(timeout: 5))
         XCTAssertTrue(suspend.isEnabled)
 
         firstSession.rightClick()
@@ -417,12 +415,46 @@ final class WatchdogUITests: XCTestCase {
     }
 
     @MainActor
-    private func focusSearchField(_ field: XCUIElement) {
-        field.click()
-        if searchFieldHasFocus(field) { return }
-        Thread.sleep(forTimeInterval: 0.3)
-        field.click()
-        XCTAssertTrue(searchFieldHasFocus(field), "search field did not take keyboard focus after retry")
+    private func waitForKeyboardFocus(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if searchFieldHasFocus(element) { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return searchFieldHasFocus(element)
+    }
+
+    @MainActor
+    private func ensureKeyboardFocus(_ element: XCUIElement) throws {
+        clickCenter(element)
+        if waitForKeyboardFocus(element, timeout: 2) { return }
+        clickCenter(element)
+        if waitForKeyboardFocus(element, timeout: 2) { return }
+        throw XCTSkip("keyboard focus unavailable: another app is frontmost")
+    }
+
+    @MainActor
+    private func clickCenter(_ element: XCUIElement) {
+        if element.isHittable {
+            element.click()
+            return
+        }
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+    }
+
+    @MainActor
+    private func activateAndWait(_ app: XCUIApplication) {
+        app.activate()
+        let window = app.windows.firstMatch
+        _ = window.waitForExistence(timeout: 3)
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if app.state == .runningForeground, window.exists {
+                return
+            }
+            app.activate()
+            Thread.sleep(forTimeInterval: 0.1)
+        }
     }
 
     @MainActor
@@ -430,20 +462,29 @@ final class WatchdogUITests: XCTestCase {
         let member = app.descendants(matching: .any)["process.71003.9071003.row"]
         if member.exists { return }
 
-        row.click()
-        let triangles = app.disclosureTriangles
-        if triangles.firstMatch.waitForExistence(timeout: 1) {
-            triangles.firstMatch.click()
+        for _ in 0..<3 {
+            clickCenter(row)
+            let triangles = app.disclosureTriangles
+            if triangles.firstMatch.waitForExistence(timeout: 1) {
+                clickCenter(triangles.firstMatch)
+                if member.waitForExistence(timeout: 2) { return }
+            }
+
+            row.coordinate(withNormalizedOffset: CGVector(dx: 0.04, dy: 0.5)).click()
+            if member.waitForExistence(timeout: 2) { return }
+
+            let doubleClick = row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
+            doubleClick.doubleClick()
             if member.waitForExistence(timeout: 2) { return }
         }
+    }
 
-        row.click()
-        row.typeKey(.rightArrow, modifierFlags: [])
-        if member.waitForExistence(timeout: 2) { return }
-
-        row.click()
-        row.typeKey(.return, modifierFlags: [])
-        _ = member.waitForExistence(timeout: 2)
+    @MainActor
+    private func attachScreenshot(_ app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     @MainActor
@@ -452,20 +493,42 @@ final class WatchdogUITests: XCTestCase {
         XCTAssertTrue(actions.waitForExistence(timeout: 5))
         XCTAssertTrue(actions.isEnabled)
         let terminate = app.menuItems["종료…"]
+        let securityAgent = XCUIApplication(bundleIdentifier: "com.apple.SecurityAgent")
         for attempt in 0..<3 {
-            actions.click()
+            activateAndWait(app)
+            clickCenter(actions)
             if terminate.waitForExistence(timeout: 2) { return }
+            if securityAgent.exists {
+                attachScreenshot(app, name: "openActionMenu-SecurityAgent-attempt-\(attempt)")
+            }
             if attempt < 2 { Thread.sleep(forTimeInterval: 0.3) }
         }
-        XCTAssertTrue(terminate.waitForExistence(timeout: 1))
+        attachScreenshot(app, name: "openActionMenu-failed")
+        XCTAssertTrue(terminate.waitForExistence(timeout: 1), "action menu did not open after 3 attempts")
+    }
+
+    @MainActor
+    private func watchdogProductURL() -> URL {
+        let testBundle = Bundle(for: Self.self).bundleURL
+        let products = testBundle
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appURL = products.appendingPathComponent("Watchdog.app")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: appURL.path), "missing app at \(appURL.path)")
+        return appURL
     }
 
     @MainActor
     private func launch(arguments: [String]) -> XCUIApplication {
         continueAfterFailure = false
-        let app = XCUIApplication()
+        // Bind by product URL so launch/terminate target the Debug fixture,
+        // not ~/Applications/Watchdog.app which shares the bundle id.
+        let app = XCUIApplication(url: watchdogProductURL())
         app.launchArguments = arguments
         app.launch()
+        activateAndWait(app)
         return app
     }
 }

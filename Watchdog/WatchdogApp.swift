@@ -35,24 +35,27 @@ private enum WatchdogUITestFixtureHost {
     static var window: NSWindow?
 
     static func showWindowIfNeeded() {
-        guard window == nil, let monitor, let launchAtLogin else { return }
-        let hosting = NSHostingView(
-            rootView: WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
-        )
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 590),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Watchdog UI 테스트"
-        window.contentView = hosting
-        window.standardWindowButton(.closeButton)?.setAccessibilityLabel("닫기")
-        window.standardWindowButton(.miniaturizeButton)?.setAccessibilityLabel("최소화")
-        window.standardWindowButton(.zoomButton)?.setAccessibilityLabel("확대/축소")
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        Self.window = window
+        if window == nil {
+            guard let monitor, let launchAtLogin else { return }
+            let hosting = NSHostingView(
+                rootView: WatchdogMenuView(monitor: monitor, launchAtLogin: launchAtLogin)
+            )
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 480, height: 590),
+                styleMask: [.titled, .closable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Watchdog UI 테스트"
+            window.contentView = hosting
+            window.standardWindowButton(.closeButton)?.setAccessibilityLabel("닫기")
+            window.standardWindowButton(.miniaturizeButton)?.setAccessibilityLabel("최소화")
+            window.standardWindowButton(.zoomButton)?.setAccessibilityLabel("확대/축소")
+            window.center()
+            Self.window = window
+        }
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
     }
 }
 #endif
@@ -200,11 +203,13 @@ final class WatchdogAppDelegate: NSObject, NSApplicationDelegate {
                         try? await Task.sleep(for: .milliseconds(50))
                     }
                     WatchdogWindowOpener.openMainWindow()
+                    WatchdogWindowOpener.bringMainWindowForward()
                 } else {
                     await Task.yield()
                     WatchdogUITestFixtureHost.showWindowIfNeeded()
                 }
                 NSApplication.shared.activate(ignoringOtherApps: true)
+                WatchdogUITestFixtureHost.window?.makeKeyAndOrderFront(nil)
             }
         #endif
         }
