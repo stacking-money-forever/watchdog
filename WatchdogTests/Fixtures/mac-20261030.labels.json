@@ -1,0 +1,1154 @@
+{
+ "fixture": "mac-20261030.json",
+ "labeledAt": "2026-10-30",
+ "schema": {
+  "kind": "agent|service|other|application|system|browserRenderer",
+  "sessionRoot": "pid of the agent/service root this process belongs to",
+  "orphan": "bool",
+  "orphanReason": "temporaryLaunchPath|reparentedToLaunchd|...",
+  "tolerance": "miss = classifier may miss this; counted separately"
+ },
+ "labels": {
+  "1": {
+   "kind": "system",
+   "orphan": false,
+   "note": "negative control",
+   "_path": "/sbin/launchd"
+  },
+  "117": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "400": {
+   "kind": "system",
+   "orphan": false,
+   "note": "negative control",
+   "_path": "ameworks/SkyLight.framework/Resources/WindowServer"
+  },
+  "535": {
+   "kind": "service",
+   "orphan": false,
+   "note": "Stackot receiver server.js",
+   "_path": "/opt/homebrew/bin/bun"
+  },
+  "538": {
+   "kind": "service",
+   "orphan": false,
+   "note": "Stackot caddy",
+   "_path": "/opt/homebrew/bin/caddy"
+  },
+  "752": {
+   "kind": "system",
+   "orphan": false,
+   "note": "negative control",
+   "_path": "rary/CoreServices/Finder.app/Contents/MacOS/Finder"
+  },
+  "812": {
+   "kind": "application",
+   "orphan": false,
+   "note": "AppTranslocation Aerial extension",
+   "_path": "ion.appex/Contents/MacOS/Aerial4WallpaperExtension"
+  },
+  "1174": {
+   "kind": "service",
+   "orphan": false,
+   "note": "Stackot cloudflared tunnel",
+   "_path": "/opt/homebrew/bin/cloudflared"
+  },
+  "1178": {
+   "kind": "service",
+   "orphan": false,
+   "note": "herdr server (launchctl sh.brew.herdr)",
+   "_path": "/opt/homebrew/opt/herdr/bin/herdr"
+  },
+  "1181": {
+   "kind": "service",
+   "orphan": false,
+   "note": "python -m http.server 7655, resident",
+   "_path": ".local/share/mise/installs/python/3.11/bin/python3"
+  },
+  "1182": {
+   "kind": "service",
+   "orphan": false,
+   "note": "ollama serve (launchctl)",
+   "_path": "/opt/homebrew/opt/ollama/bin/ollama"
+  },
+  "1211": {
+   "kind": "application",
+   "orphan": false,
+   "note": "AppTranslocation app",
+   "_path": "04-5CE1E4811058/d/Aerial.app/Contents/MacOS/Aerial"
+  },
+  "1263": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1264": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1265": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1285": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1314": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1318": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1367": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1372": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1384": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1391": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1398": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1400": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "1404": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1410": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1424": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1451": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1467": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1486": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1503": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1514": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "1529": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "2019": {
+   "kind": "service",
+   "orphan": false,
+   "note": "herdr web-ui plugin bun serve",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "2070": {
+   "kind": "service",
+   "orphan": false,
+   "note": "herdr web-ui child",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "2455": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. cwd is temp",
+   "_path": "ort/brgr/worktrees/brgr/f8ba63f0/target/debug/brgr"
+  },
+  "2610": {
+   "kind": "service",
+   "orphan": false,
+   "note": "herdr web-ui server/index.ts",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "3217": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "3220": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "3478": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 3478,
+   "project": "dev",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "3502": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 3502,
+   "project": "pear-now-playing",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "3699": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 3478,
+   "note": "direct child of agent/service root 3478",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "3700": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 3478,
+   "note": "direct child of agent/service root 3478",
+   "_path": "~/.local/bin/meter"
+  },
+  "3759": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 3478,
+   "note": "direct child of agent/service root 3478",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "3792": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 3502,
+   "note": "direct child of agent/service root 3502",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "3793": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 3502,
+   "note": "direct child of agent/service root 3502",
+   "_path": "~/.local/bin/meter"
+  },
+  "3820": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 3502,
+   "note": "direct child of agent/service root 3502",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "4386": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "5732": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "7332": {
+   "kind": "application",
+   "orphan": false,
+   "note": "installed Watchdog.app",
+   "_path": "/Applications/Watchdog.app/Contents/MacOS/Watchdog"
+  },
+  "9432": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 16862,
+   "note": "direct child of agent/service root 16862",
+   "_path": "/bin/zsh"
+  },
+  "10293": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "11258": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 19216,
+   "note": "direct child of agent/service root 19216",
+   "_path": "/bin/zsh"
+  },
+  "11718": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "12382": {
+   "kind": "service",
+   "orphan": false,
+   "agentName": "codex",
+   "sessionRoot": 66092,
+   "note": "codex app-server --listen spawned by the daemon 66092",
+   "_path": "on/releases/0.165.0-aarch64-apple-darwin/bin/codex"
+  },
+  "12769": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 12769,
+   "project": "nikke-api",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "14172": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. cwd is temp",
+   "_path": "ort/brgr/worktrees/brgr/49be62ab/target/debug/brgr"
+  },
+  "14241": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 12769,
+   "note": "direct child of agent/service root 12769",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "14242": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 12769,
+   "note": "direct child of agent/service root 12769",
+   "_path": "~/.local/bin/meter"
+  },
+  "14278": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 12769,
+   "note": "direct child of agent/service root 12769",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "14407": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 19358,
+   "note": "direct child of agent/service root 19358",
+   "_path": "/bin/zsh"
+  },
+  "16671": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "16862": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 16862,
+   "project": "watchdog",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "17766": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 16862,
+   "note": "direct child of agent/service root 16862",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "17767": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 16862,
+   "note": "direct child of agent/service root 16862",
+   "_path": "~/.local/bin/meter"
+  },
+  "17788": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 16862,
+   "note": "direct child of agent/service root 16862",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "17921": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "18010": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "18145": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "18385": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "18857": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 18857,
+   "project": "meter",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "19061": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 18857,
+   "note": "direct child of agent/service root 18857",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "19064": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 18857,
+   "note": "direct child of agent/service root 18857",
+   "_path": "~/.local/bin/meter"
+  },
+  "19081": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 18857,
+   "note": "direct child of agent/service root 18857",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "19216": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 19216,
+   "project": "rapi-agent",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "19296": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 19216,
+   "note": "direct child of agent/service root 19216",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "19297": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 19216,
+   "note": "direct child of agent/service root 19216",
+   "_path": "~/.local/bin/meter"
+  },
+  "19299": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "19322": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 19216,
+   "note": "direct child of agent/service root 19216",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "19358": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 19358,
+   "project": "brgr",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "19415": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 19358,
+   "note": "direct child of agent/service root 19358",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "19416": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 19358,
+   "note": "direct child of agent/service root 19358",
+   "_path": "~/.local/bin/meter"
+  },
+  "19436": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 19358,
+   "note": "direct child of agent/service root 19358",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "21348": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "26682": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "28135": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 28135,
+   "project": "justn-me",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "29412": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "29606": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 29606,
+   "project": "vmdeck",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "30396": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "31046": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 28135,
+   "note": "direct child of agent/service root 28135",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "31047": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 28135,
+   "note": "direct child of agent/service root 28135",
+   "_path": "~/.local/bin/meter"
+  },
+  "31088": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 28135,
+   "note": "direct child of agent/service root 28135",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "31337": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 29606,
+   "note": "direct child of agent/service root 29606",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "31338": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 29606,
+   "note": "direct child of agent/service root 29606",
+   "_path": "~/.local/bin/meter"
+  },
+  "31370": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 29606,
+   "note": "direct child of agent/service root 29606",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "31880": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "34033": {
+   "kind": "application",
+   "orphan": false,
+   "note": "FigmaAgent.app",
+   "_path": "rt/Figma/FigmaAgent.app/Contents/MacOS/figma_agent"
+  },
+  "35452": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 19358,
+   "note": "direct child of agent/service root 19358",
+   "_path": "/bin/zsh"
+  },
+  "38959": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "39565": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "39985": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "43181": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "46564": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "47729": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 47729,
+   "project": "brgr",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "48980": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 47729,
+   "note": "direct child of agent/service root 47729",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "48981": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 47729,
+   "note": "direct child of agent/service root 47729",
+   "_path": "~/.local/bin/meter"
+  },
+  "49108": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 47729,
+   "note": "direct child of agent/service root 47729",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "52820": {
+   "kind": "service",
+   "orphan": false,
+   "agentName": "opencode",
+   "sessionRoot": 52820,
+   "note": "opencode serve --service; launchd-resident by design (ps/launchctl)",
+   "_path": "/opt/homebrew/Cellar/opencode/2.0.20/bin/opencode"
+  },
+  "54990": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "56877": {
+   "kind": "application",
+   "orphan": false,
+   "note": "Docker Desktop backend (.app)",
+   "_path": "tions/Docker.app/Contents/MacOS/com.docker.backend"
+  },
+  "56918": {
+   "kind": "application",
+   "orphan": false,
+   "note": "Docker Desktop backend (.app)",
+   "_path": "tions/Docker.app/Contents/MacOS/com.docker.backend"
+  },
+  "56919": {
+   "kind": "application",
+   "orphan": false,
+   "note": "Docker Desktop backend (.app)",
+   "_path": "tions/Docker.app/Contents/MacOS/com.docker.backend"
+  },
+  "58822": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "59114": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 59114,
+   "project": "agent-progress",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "59213": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 59114,
+   "note": "direct child of agent/service root 59114",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "59214": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 59114,
+   "note": "direct child of agent/service root 59114",
+   "_path": "~/.local/bin/meter"
+  },
+  "59221": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 59114,
+   "note": "direct child of agent/service root 59114",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "60210": {
+   "kind": "service",
+   "orphan": true,
+   "agentName": "codex",
+   "sessionRoot": 60210,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "codex app-server daemon started from another session's scratchpad (liveC1); leftover",
+   "_path": "on/releases/0.162.1-aarch64-apple-darwin/bin/codex"
+  },
+  "63606": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "63828": {
+   "kind": "agent",
+   "orphan": false,
+   "agentName": "claude",
+   "sessionRoot": 63828,
+   "project": "justn-bench",
+   "note": "claude-code under herdr zsh (host 1178)",
+   "_path": "omebrew/Caskroom/claude-code@latest/2.1.293/claude"
+  },
+  "64416": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 63828,
+   "note": "direct child of agent/service root 63828",
+   "_path": "~/.local/bin/aside"
+  },
+  "64417": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 63828,
+   "note": "direct child of agent/service root 63828",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "64418": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 63828,
+   "note": "direct child of agent/service root 63828",
+   "_path": "~/.local/bin/meter"
+  },
+  "64461": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 63828,
+   "note": "direct child of agent/service root 63828",
+   "_path": "/opt/homebrew/Cellar/bun/1.3.13/bin/bun"
+  },
+  "66092": {
+   "kind": "service",
+   "orphan": false,
+   "agentName": "codex",
+   "sessionRoot": 66092,
+   "note": "codex app-server daemon pid-update-loop; resident by design",
+   "_path": "on/releases/0.165.0-aarch64-apple-darwin/bin/codex"
+  },
+  "67887": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "68711": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 60210,
+   "note": "codex-code-mode-host child of the leftover daemon",
+   "_path": "62.1-aarch64-apple-darwin/bin/codex-code-mode-host"
+  },
+  "72051": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "72183": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72184": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72185": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72186": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72187": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/bin/aside"
+  },
+  "72188": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "72189": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72190": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72191": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72192": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "72193": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/bin/aside"
+  },
+  "72194": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "76510": {
+   "kind": "other",
+   "orphan": false,
+   "note": "herdr session shell (session host chain)",
+   "_path": "/bin/zsh"
+  },
+  "76944": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "77241": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "77242": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "77243": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "77244": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "77245": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/bin/aside"
+  },
+  "77246": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "79496": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "80190": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 12769,
+   "note": "direct child of agent/service root 12769",
+   "_path": "/usr/bin/caffeinate"
+  },
+  "81639": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "82240": {
+   "kind": "service",
+   "orphan": false,
+   "agentName": "cursor-agent",
+   "sessionRoot": 82240,
+   "note": "cursor-agent index.js worker-server, ppid 1; background worker server (label uncertain, not a TTY session)",
+   "_path": "hare/cursor-agent/versions/2026.10.22-27dcf5f/node"
+  },
+  "82368": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 82240,
+   "note": "typescript-language-server under cursor-agent worker",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "83849": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "88857": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "88859": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "88861": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "88863": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/share/mise/installs/node/24.20.0/bin/node"
+  },
+  "88865": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "~/.local/bin/aside"
+  },
+  "88866": {
+   "kind": "application",
+   "orphan": false,
+   "sessionRoot": 52820,
+   "note": "direct child of agent/service root 52820",
+   "_path": "rces/app.asar.unpacked/out/mcp-server-darwin-arm64"
+  },
+  "92060": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "wait-gate-brgr script left in $TMPDIR with ppid 1 (>11h)",
+   "_path": "/bin/sh"
+  },
+  "94500": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 29606,
+   "note": "direct child of agent/service root 29606",
+   "_path": "/usr/bin/caffeinate"
+  },
+  "94777": {
+   "kind": "other",
+   "orphan": false,
+   "sessionRoot": 16862,
+   "note": "direct child of agent/service root 16862",
+   "_path": "/usr/bin/caffeinate"
+  },
+  "97073": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/946dc0e5/target/debug/brgr"
+  },
+  "97919": {
+   "kind": "other",
+   "orphan": true,
+   "tolerance": "miss",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. no temp path visible outside args — tolerated miss",
+   "_path": "ort/brgr/worktrees/brgr/5dba45e4/target/debug/brgr"
+  },
+  "99373": {
+   "kind": "other",
+   "orphan": true,
+   "orphanReason": "temporaryLaunchPath",
+   "note": "brgr __notify from a test fixture-session with a temporary --home; leftover. cwd is temp",
+   "_path": "ort/brgr/worktrees/brgr/b70b1a15/target/debug/brgr"
+  }
+ }
+}
