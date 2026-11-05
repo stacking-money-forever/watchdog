@@ -22,20 +22,52 @@ export WATCHDOG_LEDGER_PATH="$work/ledger/suspensions.json"
 export WATCHDOG_JOURNAL_PATH="$work/journal.jsonl"
 export WATCHDOG_RULES_PATH="$work/absent-rules.json"
 
-spawned=()
-http_root=""
-cleanup() {
-  for pid in "${spawned[@]:-}"; do
-    [[ -n "$pid" ]] || continue
-    if kill -0 "$pid" 2>/dev/null; then
-      kill -CONT "$pid" 2>/dev/null || true
-      kill -TERM "$pid" 2>/dev/null || true
-    fi
+# http.server publishes its cwd and outlives this script if the script is killed
+# outright. The classifier calls a temporary cwd a leftover, so this fixture
+# needs a non-temporary one: an empty directory of its own, never $HOME.
+http_root="$(mktemp -d "$HOME/Library/Caches/watchdog-cli-e2e.XXXXXX")"
+
+# Processes are tracked in a file, not an array, so that the reaper below and
+# helpers started inside $(...) all see the same list. Each entry keeps the
+# start time, so a reused pid is never signalled.
+tracked="$work/tracked"
+start_of() { ps -o lstart= -p "$1" 2>/dev/null | xargs; }
+track() {
+  local pid started
+  for pid in "$@"; do
+    started="$(start_of "$pid")"
+    if [[ -n "$started" ]]; then printf '%s %s\n' "$pid" "$started" >>"$tracked"; fi
   done
+}
+stop_tracked() {
+  local pid started
+  if [[ -f "$tracked" ]]; then
+    while read -r pid started; do
+      if [[ "$(start_of "$pid")" == "$started" ]]; then
+        kill -CONT "$pid" 2>/dev/null || true
+        kill -TERM "$pid" 2>/dev/null || true
+      fi
+    done <"$tracked"
+  fi
+  rmdir "$http_root" 2>/dev/null || true
+}
+reaper=""
+cleanup() {
+  if [[ -n "$reaper" ]]; then kill -TERM "$reaper" 2>/dev/null || true; fi
+  stop_tracked
   wait 2>/dev/null || true
-  if [[ -n "$http_root" ]]; then rmdir "$http_root" 2>/dev/null || true; fi
+  rmdir "$http_root" 2>/dev/null || true
 }
 trap cleanup EXIT
+
+# An EXIT trap cannot run after SIGKILL, so a sidecar waits for this script to
+# disappear and then stops what it left behind.
+script_started="$(start_of $$)"
+(
+  while [[ "$(start_of $$)" == "$script_started" ]]; do sleep 1; done
+  stop_tracked
+) </dev/null >/dev/null 2>&1 &
+reaper=$!
 
 pass=0
 fail=0
@@ -91,7 +123,7 @@ start_helper() {
   local name="$1"
   "$helper" "$work/$name.heartbeat" "$work/$name.term" >/dev/null 2>&1 &
   local pid=$!
-  spawned+=("$pid")
+  track "$pid"
   wait_until test -s "$work/$name.heartbeat"
   echo "$pid"
 }
@@ -108,7 +140,7 @@ check "watch --count 0 is a usage error" expect_exit 2 "$cli" watch --count 0
 check "watch --count abc is a usage error" expect_exit 2 "$cli" watch --count abc
 
 echo "Suspend / resume (reversible)"
-a=$(start_helper a); spawned+=("$a")
+a=$(start_helper a)
 token_a=$(token_of "$a")
 check "inspect by token" expect_exit 0 "$cli" inspect "$token_a"
 check "suspend runs with a non-agent warning" expect_exit 0 "$cli" suspend "$token_a"
@@ -143,7 +175,7 @@ check "process is gone" wait_until gone "$a"
 check "ledger stays empty" test "$(ledger_count)" = 0
 
 echo "Force quit and identity safety"
-b=$(start_helper b); spawned+=("$b")
+b=$(start_helper b)
 token_b=$(token_of "$b")
 stale_b="${b}:1:$(id -u)"
 check "force-quit without --force is blocked" expect_exit 3 "$cli" force-quit "$token_b"
@@ -167,7 +199,7 @@ mkdir -p "$work/bin"
 ln -s /usr/bin/yes "$work/bin/claude"
 "$work/bin/claude" >/dev/null &
 burner=$!
-spawned+=("$burner")
+track "$burner"
 check "burner is listed" wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$burner" "$cli"
 burner_token=$(token_of "$burner")
 check "watch auto-suspends the runaway agent" expect_exit 0 \
@@ -187,10 +219,10 @@ echo "Agent recognition through an interpreter"
 printf 'import subprocess\nsubprocess.run(["sleep", "30"])\n' >"$work/bin/gemini.py"
 /usr/bin/python3 "$work/bin/gemini.py" &
 interpreted=$!
-spawned+=("$interpreted")
+track "$interpreted"
 wait_until pgrep -P "$interpreted" sleep >/dev/null
 child=$(pgrep -P "$interpreted" sleep | head -1)
-spawned+=("$child")
+track "$child"
 agent_json=$("$cli" list --scope agents --search gemini.py --json --interval 0.2)
 check "python-launched agent is an agent named gemini" /usr/bin/python3 -c \
   'import json,sys; r=[p for p in json.loads(sys.argv[1]) if p["pid"]==int(sys.argv[2])]; sys.exit(not (r and r[0]["name"]=="gemini" and r[0]["kind"]=="agent"))' \
@@ -216,11 +248,6 @@ kill -TERM "$child" "$interpreted" 2>/dev/null || true
 
 echo "Services and leftovers"
 http_pidfile="$work/http.pid"
-# The classifier calls a temporary cwd a leftover, so this fixture needs a
-# non-temporary one. http.server publishes its cwd and outlives this script if
-# the script is killed outright, so that cwd must be an empty directory of its
-# own and never $HOME.
-http_root="$(mktemp -d "$HOME/Library/Caches/watchdog-cli-e2e.XXXXXX")"
 (
   cd "$http_root"
   /usr/bin/python3 -m http.server 0 --bind 127.0.0.1 >/dev/null 2>&1 &
@@ -228,7 +255,7 @@ http_root="$(mktemp -d "$HOME/Library/Caches/watchdog-cli-e2e.XXXXXX")"
 )
 wait_until test -s "$http_pidfile"
 http_pid=$(tr -d '[:space:]' <"$http_pidfile")
-spawned+=("$http_pid")
+track "$http_pid"
 check "http.server fixture publishes only its empty directory" test \
   "$(lsof -a -p "$http_pid" -d cwd -Fn | sed -n 's/^n//p')" = "$http_root"
 wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$http_pid" "$cli"
@@ -245,7 +272,7 @@ printf 'echo $$ > "%s"\nexec sleep 300\n' "$leftover_pidfile" >"$work/leftover.s
 )
 wait_until test -s "$leftover_pidfile"
 leftover_pid=$(tr -d '[:space:]' <"$leftover_pidfile")
-spawned+=("$leftover_pid")
+track "$leftover_pid"
 wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$leftover_pid" "$cli"
 leftover_json=$("$cli" list --scope all --json --interval 0.2)
 check "temp leftover.sh is an other orphan" /usr/bin/python3 -c \
@@ -266,7 +293,7 @@ mkdir -p "$work/bin"
 ln -sf /bin/sleep "$work/bin/fakeagent"
 "$work/bin/fakeagent" 60 >/dev/null &
 fakeagent_pid=$!
-spawned+=("$fakeagent_pid")
+track "$fakeagent_pid"
 check "user-named fakeagent is listed as an agent" wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","agents","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row and row.get("kind")=="agent" and row.get("name")=="fakeagent" else 1)' "$fakeagent_pid" "$cli"
 kill -TERM "$fakeagent_pid" 2>/dev/null || true
 printf '{' >"$work/rules.json"
@@ -315,11 +342,11 @@ PY
 export FAKEAGENT_CHILDREN="$work/fakeagent.children"
 /usr/bin/python3 "$work/bin/fakeagent.py" &
 session_root=$!
-spawned+=("$session_root")
+track "$session_root"
 check "session fakeagent spawned children" wait_until test -s "$FAKEAGENT_CHILDREN"
 session_c1=$(sed -n '1p' "$FAKEAGENT_CHILDREN" | tr -d '[:space:]')
 session_c2=$(sed -n '2p' "$FAKEAGENT_CHILDREN" | tr -d '[:space:]')
-spawned+=("$session_c1" "$session_c2")
+track "$session_c1" "$session_c2"
 check "session fakeagent is an agent" wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","agents","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row and row.get("kind")=="agent" and row.get("name")=="fakeagent" else 1)' "$session_root" "$cli"
 session_token=$(token_of "$session_root")
 check "session watch auto-suspends the group" expect_exit 0 \
