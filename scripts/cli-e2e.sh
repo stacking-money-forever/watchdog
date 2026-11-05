@@ -23,6 +23,7 @@ export WATCHDOG_JOURNAL_PATH="$work/journal.jsonl"
 export WATCHDOG_RULES_PATH="$work/absent-rules.json"
 
 spawned=()
+http_root=""
 cleanup() {
   for pid in "${spawned[@]:-}"; do
     [[ -n "$pid" ]] || continue
@@ -32,6 +33,7 @@ cleanup() {
     fi
   done
   wait 2>/dev/null || true
+  if [[ -n "$http_root" ]]; then rmdir "$http_root" 2>/dev/null || true; fi
 }
 trap cleanup EXIT
 
@@ -214,14 +216,21 @@ kill -TERM "$child" "$interpreted" 2>/dev/null || true
 
 echo "Services and leftovers"
 http_pidfile="$work/http.pid"
+# The classifier calls a temporary cwd a leftover, so this fixture needs a
+# non-temporary one. http.server publishes its cwd and outlives this script if
+# the script is killed outright, so that cwd must be an empty directory of its
+# own and never $HOME.
+http_root="$(mktemp -d "$HOME/Library/Caches/watchdog-cli-e2e.XXXXXX")"
 (
-  cd "$HOME"
+  cd "$http_root"
   /usr/bin/python3 -m http.server 0 --bind 127.0.0.1 >/dev/null 2>&1 &
   echo $! >"$http_pidfile"
 )
 wait_until test -s "$http_pidfile"
 http_pid=$(tr -d '[:space:]' <"$http_pidfile")
 spawned+=("$http_pid")
+check "http.server fixture publishes only its empty directory" test \
+  "$(lsof -a -p "$http_pid" -d cwd -Fn | sed -n 's/^n//p')" = "$http_root"
 wait_until /usr/bin/python3 -c 'import json,sys,subprocess; pid=int(sys.argv[1]); cli=sys.argv[2]; data=json.loads(subprocess.check_output([cli,"list","--scope","all","--json","--interval","0.2"])); row=next((p for p in data if p["pid"]==pid), None); sys.exit(0 if row else 1)' "$http_pid" "$cli"
 http_json=$("$cli" list --scope all --json --interval 0.2)
 check "double-forked http.server is a non-orphan service" /usr/bin/python3 -c \
